@@ -1,0 +1,8 @@
+# Docker Ignore Content
+.git
+.dockerignore
+.venv
+.pixi
+# Exclude the data directory if it's large
+data/
+.devcontainer/
