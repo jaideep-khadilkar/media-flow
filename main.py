@@ -16,9 +16,9 @@ import ray.data
 from ray.exceptions import RaySystemError
 
 # --- Configuration ---
-# Use a placeholder path until you download the HDTF dataset
-VIDEO_INPUT_PATH = "./data/raw/RD_Radio1_000.mp4"
-VIDEO_OUTPUT_PATH = "./data/processed/RD_Radio1_000.mp4"
+# Use directory-based I/O
+RAW_INPUT_DIR = "./data/raw/tmp"
+PROCESSED_OUTPUT_DIR = "./data/processed"
 
 # --- Utility Functions ---
 
@@ -176,33 +176,58 @@ def main():
     # 1. Initialization
     initialize_ray()
 
-    # 2. Ingestion (Mock Data)
-    logger.info("Attempting local video ingestion...")
-    frames_list = video_to_frames(VIDEO_INPUT_PATH)
-    
-    if not frames_list:
-        logger.error("No frames extracted. Cannot run pipeline.")
-        return
+    # Ensure directories exist
+    os.makedirs(RAW_INPUT_DIR, exist_ok=True)
+    os.makedirs(PROCESSED_OUTPUT_DIR, exist_ok=True)
 
-    # 3. Parallel Processing with Ray Data
-    logger.info("Distributing data and applying augmentation pipeline with Ray...")
-    
-    # Convert the list of frames into a Ray Dataset
-    ds = ray.data.from_items(frames_list)
-    
-    # Apply the augmentation function in parallel across the Ray cluster
-    augmented_ds = ds.map(apply_augmentation)
-    
-    # 4. Collection (Collect results back to the driver node)
-    logger.info("Augmentation complete. Collecting results...")
-    results = augmented_ds.take_all()
+    # Discover input videos
+    input_videos = sorted(glob.glob(os.path.join(RAW_INPUT_DIR, "*.mp4")))
+    if not input_videos:
+        logger.warning(f"No videos found in {RAW_INPUT_DIR}. Creating a dummy video for testing.")
+        try:
+            dummy_path = os.path.join(RAW_INPUT_DIR, "dummy.mp4")
+            dummy_frame = np.zeros((480, 480, 3), dtype=np.uint8)
+            dummy_writer = cv2.VideoWriter(
+                dummy_path,
+                cv2.VideoWriter_fourcc(*'mp4v'),
+                30,
+                (480, 480)
+            )
+            for _ in range(10):
+                dummy_writer.write(dummy_frame)
+            dummy_writer.release()
+            input_videos = [dummy_path]
+            logger.info(f"Created dummy video at {dummy_path}.")
+        except Exception as e:
+            logger.error(f"Failed to create dummy video. Place an MP4 into {RAW_INPUT_DIR}. Error: {e}")
+            ray.shutdown()
+            return
 
-    # 5. Output and Write Video
-    logger.success("Ray Data processing complete. Ready to write augmented video.")
-    
-    # *** FIX: Pass the output path here ***
-    write_frames_to_video(results, VIDEO_OUTPUT_PATH)
-    
+    # Process each video
+    for video_path in input_videos:
+        logger.info(f"Processing video: {video_path}")
+
+        # 2. Ingestion
+        frames_list = video_to_frames(video_path)
+        if not frames_list:
+            logger.error(f"No frames extracted from {video_path}. Skipping.")
+            continue
+
+        # 3. Parallel Processing with Ray Data
+        logger.info("Distributing data and applying augmentation pipeline with Ray...")
+        ds = ray.data.from_items(frames_list)
+        augmented_ds = ds.map(apply_augmentation)
+
+        # 4. Collection
+        logger.info("Augmentation complete. Collecting results...")
+        results = augmented_ds.take_all()
+
+        # 5. Output and Write Video
+        basename = os.path.splitext(os.path.basename(video_path))[0]
+        output_path = os.path.join(PROCESSED_OUTPUT_DIR, f"{basename}.mp4")
+        logger.success("Ray Data processing complete. Ready to write augmented video.")
+        write_frames_to_video(results, output_path)
+
     ray.shutdown()
     logger.info("Pipeline finished successfully.")
 
@@ -210,26 +235,6 @@ def main():
 if __name__ == "__main__":
     # Create the necessary placeholder folders
     os.makedirs("./data/processed", exist_ok=True)
+    os.makedirs("./data/raw/tmp", exist_ok=True)
     
-    # Create a dummy video if the input is missing, so the program can execute fully.
-    if not os.path.exists(VIDEO_INPUT_PATH):
-        logger.warning(f"Creating dummy video for {VIDEO_INPUT_PATH}. Replace with actual video for full test.")
-        try:
-            # Create a black frame (480x480, BGR)
-            dummy_frame = np.zeros((480, 480, 3), dtype=np.uint8)
-            # Create a VideoWriter object for the dummy video
-            dummy_writer = cv2.VideoWriter(
-                VIDEO_INPUT_PATH, 
-                cv2.VideoWriter_fourcc(*'mp4v'), 
-                30, # 30 FPS
-                (480, 480)
-            )
-            # Write 10 frames
-            for _ in range(10):
-                dummy_writer.write(dummy_frame)
-            dummy_writer.release()
-            logger.info(f"Created a 10-frame dummy video at {VIDEO_INPUT_PATH} for testing.")
-        except Exception as e:
-            logger.error(f"Failed to create dummy video. Please place a video manually. Error: {e}")
-            
     main()
