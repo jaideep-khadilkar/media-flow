@@ -6,3 +6,6 @@
 # Exclude the data directory if it's large
 data/
 .devcontainer/
+logs/
+# pixi.toml
+# pixi.lock

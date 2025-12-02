@@ -1,0 +1,102 @@
+# Common Airflow service configuration
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.9.2
+  environment: &airflow-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+
+    # DB connection (new [database] section syntax)
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+
+    AIRFLOW__CORE__FERNET_KEY: ''
+    AIRFLOW__WEBSERVER__RBAC: "true"
+
+    # UID for local dev
+    AIRFLOW_UID: "50000"
+
+    # Install Docker + Kubernetes providers
+    _PIP_ADDITIONAL_REQUIREMENTS: "apache-airflow-providers-docker apache-airflow-providers-cncf-kubernetes"
+
+    # *** IMPORTANT ***
+    # Define the docker_default connection so DockerOperator can use it
+    # Minimal public-registry / local-daemon setup; no auth.
+    AIRFLOW_CONN_DOCKER_DEFAULT: "docker://"
+
+  user: "${AIRFLOW_UID:-50000}:0"
+
+  # Volumes shared by all Airflow services
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./logs:/opt/airflow/logs
+    - ./plugins:/opt/airflow/plugins
+
+    # Your local repo mapped to the path used in the DAG: /usr/local/airflow_repo
+    - .:/usr/local/airflow_repo
+
+    # Allow DockerOperator to talk to host Docker daemon
+    - /var/run/docker.sock:/var/run/docker.sock
+
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+  networks:
+    - media-flow-net
+
+
+services:
+  postgres:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
+      interval: 10s
+      retries: 5
+      timeout: 5s
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+    networks:
+      - media-flow-net
+
+  airflow_init:
+    <<: *airflow-common
+    command: >
+      bash -c "airflow db migrate &&
+      airflow users create
+      --username admin
+      --firstname Admin
+      --lastname User
+      --role Admin
+      --email admin@example.org
+      --password admin
+      "
+    restart: "no"
+
+  airflow_webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8080:8080"
+    restart: always
+    depends_on:
+      airflow_init:
+        condition: service_completed_successfully
+
+  airflow_scheduler:
+    <<: *airflow-common
+    command: scheduler
+    restart: always
+    depends_on:
+      airflow_init:
+        condition: service_completed_successfully
+
+
+volumes:
+  postgres-db-volume:
+
+networks:
+  media-flow-net:
+    name: media-flow-net
