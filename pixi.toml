@@ -1,5 +1,5 @@
 [workspace]
-name = "media-flow" 
+name = "media-flow"
 version = "0.1.0"
 description = "A data pipeline for video processing and augmentation."
 authors = ["Jaideep Khadilkar <jaideep.khadilkar@gmail.com>"]
@@ -16,17 +16,16 @@ loguru = ">=0.7.3,<0.8"
 scikit-image = ">=0.25.2,<0.26"
 albumentations = ">=2.0.8,<3"
 cryptography = ">=46.0.3,<47"
+pytorch = ">=2.9.1,<3"
+cuda-version = "12.9.*"
 
 [tasks]
 start = "python3 main.py"
-#black = "pixi run -e dev black ."
+ray_test = "python3 ray_test.py"
 
 [pypi-dependencies]
 ray = { version = ">=2.52.1, <3", extras = ["default"] }
 opencv-python = ">=4.11.0.86, <5"
-
-# *** ADDITION: Airflow and its providers (installed via PyPI) ***
-# FIX: Changed to dictionary format to correctly parse extras and version constraints.
 apache-airflow = { version = ">=2.9.0,<3.0", extras = ["celery"] }
 apache-airflow-providers-cncf-kubernetes = "*"
 apache-airflow-providers-docker = "*"
@@ -44,3 +43,10 @@ features = []
 
 [environments.dev]
 features = ["dev"]
+
+[system-requirements]
+cuda = "12"
+
+[target.linux-64.dependencies]
+cuda = ">=12.9.1,<13"
+pytorch-gpu = ">=2.9.1,<3"

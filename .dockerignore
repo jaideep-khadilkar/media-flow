@@ -1,11 +1,37 @@
-# Docker Ignore Content
+# VCS and metadata
 .git
-.dockerignore
-.venv
-.pixi
-# Exclude the data directory if it's large
-data/
+.gitignore
+
+# Development containers & VSCode
 .devcontainer/
+.vscode/
+
+# Airflow local runtime folders (never bake these)
 logs/
-# pixi.toml
-# pixi.lock
+data/
+config/
+plugins/
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Local environment files
+.env
+
+# Pixi cache / build artifacts
+.pixi/
+pixi.lock
+
+# Docker
+docker-compose.airflow.yaml
+docker-compose.airflow_2.yaml
+.dockerignore
+
+# OS junk
+.DS_Store
+
+# Local run logs
+pipeline.log

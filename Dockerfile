@@ -1,5 +1,5 @@
 # Use the official Ubuntu 22.04 image as our base
-FROM ubuntu:22.04
+FROM nvidia/cuda:12.2.0-base-ubuntu22.04
 
 # Set the working directory for subsequent commands
 WORKDIR /app

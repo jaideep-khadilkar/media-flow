@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 AIRFLOW_HOME = "/opt/airflow"
 REPO_PATH_ON_HOST = "C:/Users/iamja/Documents/GitHub/media-flow"
 REPO_PATH_IN_AIRFLOW = "/usr/local/airflow_repo"
-IMAGE_NAME = "media-flow"
+IMAGE_NAME = "media-flow-2"
 
 with DAG(
     dag_id="media_flow_ray_pipeline",
@@ -27,7 +27,7 @@ with DAG(
 
     create_dirs = BashOperator(
         task_id="create_data_directories",
-        bash_command=f"mkdir -p {REPO_PATH_IN_AIRFLOW}/data/videos",
+        bash_command=f"mkdir -p {REPO_PATH_IN_AIRFLOW}/data/processed",
     )
 
     run_ray_pipeline = DockerOperator(
