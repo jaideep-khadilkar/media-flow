@@ -31,8 +31,8 @@ COPY pixi.toml ./
 # 4. Install Python dependencies using Pixi (This step forces 3.12)
 RUN /root/.pixi/bin/pixi install
 
-# 5. Copy the rest of the application code (main.py and any other files)
-COPY . /app
+# # 5. Copy the rest of the application code (main.py and any other files)
+# COPY . /app
 
-# 6. Set the default command when the container starts
-CMD ["pixi", "run", "start"]
+# # 6. Set the default command when the container starts
+# CMD ["pixi", "run", "start"]

@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 AIRFLOW_HOME = "/opt/airflow"
 REPO_PATH_ON_HOST = "C:/Users/iamja/Documents/GitHub/media-flow"
 REPO_PATH_IN_AIRFLOW = "/usr/local/airflow_repo"
-IMAGE_NAME = "media-flow"
+IMAGE_NAME = "media-flow:1.0"
 
 with DAG(
     dag_id="media_flow_ray_pipeline",
@@ -33,7 +33,7 @@ with DAG(
     run_ray_pipeline = DockerOperator(
         task_id="run_parallel_augmentation",
         image=IMAGE_NAME,
-        command="pixi run start",
+        command="pixi run python main.py",
         mounts=[
             Mount(
                 source=REPO_PATH_ON_HOST,  # host path (as seen from the Airflow container)
