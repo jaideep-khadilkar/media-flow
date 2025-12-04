@@ -58,6 +58,7 @@ x-airflow-common:
     AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres/airflow
     AIRFLOW__CELERY__BROKER_URL: redis://:@redis:6379/0
     AIRFLOW__CORE__FERNET_KEY: ''
+    # AIREFLOW__CORE_DAGS__FOLDER: '/usr/local/airflow_repo/src/dags'
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
     AIRFLOW__CORE__LOAD_EXAMPLES: 'true'
     AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
@@ -78,10 +79,10 @@ x-airflow-common:
     # Minimal public-registry / local-daemon setup; no auth.
     # AIRFLOW_CONN_DOCKER_DEFAULT: "docker://"
   volumes:
-    - ${AIRFLOW_PROJ_DIR:-.}/dags:/opt/airflow/dags
+    - ${AIRFLOW_PROJ_DIR:-.}/src/dags:/opt/airflow/dags
     - ${AIRFLOW_PROJ_DIR:-.}/logs:/opt/airflow/logs
-    - ${AIRFLOW_PROJ_DIR:-.}/config:/opt/airflow/config
-    - ${AIRFLOW_PROJ_DIR:-.}/plugins:/opt/airflow/plugins
+    # - ${AIRFLOW_PROJ_DIR:-.}/config:/opt/airflow/config
+    # - ${AIRFLOW_PROJ_DIR:-.}/plugins:/opt/airflow/plugins
     # Your local repo mapped to the path used in the DAG: /usr/local/airflow_repo
     - C:/Users/iamja/Documents/GitHub/media-flow:/usr/local/airflow_repo
     - /var/run/docker.sock:/var/run/docker.sock
@@ -242,8 +243,8 @@ services:
           echo "   https://airflow.apache.org/docs/apache-airflow/stable/howto/docker-compose/index.html#before-you-begin"
           echo
         fi
-        mkdir -p /sources/logs /sources/dags /sources/plugins
-        chown -R "${AIRFLOW_UID}:0" /sources/{logs,dags,plugins}
+        # mkdir -p /sources/logs /sources/dags /sources/plugins
+        # chown -R "${AIRFLOW_UID}:0" /sources/{logs,dags,plugins}
         exec /entrypoint airflow version
     # yamllint enable rule:line-length
     environment:

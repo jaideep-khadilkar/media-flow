@@ -33,7 +33,7 @@ with DAG(
     run_ray_pipeline = DockerOperator(
         task_id="run_parallel_augmentation",
         image=IMAGE_NAME,
-        command="pixi run python main.py",
+        command="pixi run python src/tasks/augment.py",
         mounts=[
             Mount(
                 source=REPO_PATH_ON_HOST,  # host path (as seen from the Airflow container)
