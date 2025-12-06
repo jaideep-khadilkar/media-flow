@@ -37,7 +37,7 @@ with DAG(
         task_id="scan_videos",
         image=WORKER_IMAGE,
         # We run the specific module script using python -m or direct path
-        command=f"pixi run python src/media_flow/tasks/scan.py --input_dir {DATA_PATH}/raw/tmp --output_json {DATA_PATH}/metadata/all_videos.json",
+        command=f"pixi run python src/media_flow/tasks/scan.py --input_dir {DATA_PATH}/raw --output_json {DATA_PATH}/metadata/all_videos.json",
         mounts=[
             Mount(source=REPO_PATH_ON_HOST, target=REPO_PATH_IN_CONTAINER, type="bind")
         ],
@@ -52,7 +52,7 @@ with DAG(
         task_id="filter_videos",
         image=WORKER_IMAGE,
         # Reads the output of the previous step
-        command=f"pixi run python src/media_flow/tasks/filter.py --input_json {DATA_PATH}/metadata/all_videos.json --output_json {DATA_PATH}/metadata/filtered_videos.json --keyword Radio2",
+        command=f"pixi run python src/media_flow/tasks/filter.py --input_json {DATA_PATH}/metadata/all_videos.json --output_json {DATA_PATH}/metadata/filtered_videos.json --keyword Obama",
         mounts=[
             Mount(source=REPO_PATH_ON_HOST, target=REPO_PATH_IN_CONTAINER, type="bind")
         ],
