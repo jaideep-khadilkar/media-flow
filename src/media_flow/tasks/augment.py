@@ -3,99 +3,41 @@ import sys
 import json
 import argparse
 from loguru import logger
-from tqdm import tqdm
-
-# Core Data Science Libraries
 import numpy as np
 import cv2
 import albumentations as A
-
-# Parallel Computing
 import ray
-import ray.data
-from ray.exceptions import RaySystemError
-
-# --- Configuration ---
-# (Directories are now handled via arguments, but we keep defaults just in case)
-
-# --- Utility Functions ---
 
 
 def setup_logger():
     logger.remove()
     logger.add(
         sys.stderr,
-        format="<green>{time:HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | {message}",
+        format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | {message}",
         level="INFO",
     )
 
 
 def initialize_ray():
-    """Initializes the Ray cluster for distributed computing."""
-    try:
-        if ray.is_initialized():
-            ray.shutdown()
-
-        info = ray.init(
-            log_to_driver=True, include_dashboard=False
-        )  # Dashboard off for batch jobs usually
-        logger.info(
-            f"Ray initialized successfully. CPUs: {ray.available_resources().get('CPU', 0)}"
-        )
-
-    except RaySystemError as e:
-        logger.error(f"Failed to initialize Ray: {e}")
-        sys.exit(1)
+    if ray.is_initialized():
+        ray.shutdown()
+    # Limit object store memory to prevent Ray from eating all RAM
+    ray.init(
+        log_to_driver=True,
+        include_dashboard=False,
+        object_store_memory=2 * 1024 * 1024 * 1024,
+    )
 
 
-def video_to_frames(video_path: str) -> list[dict]:
-    if not os.path.exists(video_path):
-        logger.warning(f"Input video not found at: {video_path}")
-        return []
-
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        logger.error(f"Could not open video file {video_path}")
-        return []
-
-    frames = []
-    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    fps = cap.get(cv2.CAP_PROP_FPS)
-
-    # Note: TQDM inside the worker might clutter logs if not careful, keeping it minimal
-    for i in range(frame_count):
-        ret, frame = cap.read()
-        if not ret:
-            break
-        frames.append({"frame_id": i, "image": frame, "fps": fps})
-    cap.release()
-    return frames
-
-
-def write_frames_to_video(frames_data: list, output_path: str):
-    if not frames_data:
-        return
-
-    sorted_frames = sorted(frames_data, key=lambda x: x["frame_id"])
-    frame_example = sorted_frames[0]["augmented_image"]
-    height, width, _ = frame_example.shape
-    fps = sorted_frames[0].get("fps", 30.0)
-
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-
-    for frame_data in sorted_frames:
-        out.write(frame_data["augmented_image"])
-
-    out.release()
-    logger.success(f"Saved: {output_path}")
-
-
-# --- Pipeline Components ---
-
-
-def apply_augmentation(frame_data: dict) -> dict:
-    # Define augmentation pipeline
+# --- The Augmented Worker Function ---
+# We make this a remote function so Ray runs it in parallel
+@ray.remote
+def augment_batch(batch_frames):
+    """
+    Receives a list of (frame_id, image) tuples.
+    Returns a list of (frame_id, augmented_image) tuples.
+    """
+    # Define pipeline inside the worker to ensure serialization
     augmenter = A.Compose(
         [
             A.CoarseDropout(
@@ -122,73 +64,117 @@ def apply_augmentation(frame_data: dict) -> dict:
         p=1.0,
     )
 
-    original_image = frame_data["image"]
-    image_rgb = cv2.cvtColor(original_image, cv2.COLOR_BGR2RGB)
-    augmented_image_rgb = augmenter(image=image_rgb)["image"]
-    augmented_image_bgr = cv2.cvtColor(augmented_image_rgb, cv2.COLOR_RGB2BGR)
+    results = []
+    for frame_data in batch_frames:
+        original = frame_data["image"]
+        # Albumentations expects RGB
+        image_rgb = cv2.cvtColor(original, cv2.COLOR_BGR2RGB)
+        augmented = augmenter(image=image_rgb)["image"]
+        # Convert back to BGR for OpenCV video writing
+        image_bgr = cv2.cvtColor(augmented, cv2.COLOR_RGB2BGR)
 
-    return {
-        "frame_id": frame_data["frame_id"],
-        "augmented_image": augmented_image_bgr,
-        "fps": frame_data["fps"],
-    }
+        results.append(
+            {"frame_id": frame_data["frame_id"], "augmented_image": image_bgr}
+        )
+    return results
+
+
+def process_video_streaming(video_path: str, output_path: str, batch_size=60):
+    """
+    Reads, augments, and writes video in chunks to save memory.
+    """
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        logger.error(f"Cannot open {video_path}")
+        return
+
+    # Get Video Properties
+    width = 480  # Matches your resize target
+    height = 480  # Matches your resize target
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    # Initialize Writer
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+
+    logger.info(
+        f"Processing {os.path.basename(video_path)} ({total_frames} frames) in batches of {batch_size}..."
+    )
+
+    current_batch = []
+    frame_id = 0
+    futures = []
+
+    while True:
+        ret, frame = cap.read()
+
+        if ret:
+            # Add frame to current batch
+            current_batch.append({"frame_id": frame_id, "image": frame})
+            frame_id += 1
+
+        # If batch is full or video ended
+        if len(current_batch) == batch_size or (not ret and current_batch):
+            # Send batch to Ray worker
+            future = augment_batch.remote(current_batch)
+            futures.append(future)
+            current_batch = []  # clear memory
+
+            # Limit the number of active futures to prevent OOM
+            # This ensures we don't queue up the whole video in Ray's object store
+            if len(futures) > 4:
+                ready_ids, futures = ray.wait(futures, num_returns=1)
+                result_batch = ray.get(ready_ids[0])
+
+                # Write immediately to disk
+                # Sort just in case, though Ray usually preserves order if handled sequentially like this
+                result_batch.sort(key=lambda x: x["frame_id"])
+                for res in result_batch:
+                    out.write(res["augmented_image"])
+
+        if not ret:
+            break
+
+    # Process remaining futures
+    for future in futures:
+        result_batch = ray.get(future)
+        result_batch.sort(key=lambda x: x["frame_id"])
+        for res in result_batch:
+            out.write(res["augmented_image"])
+
+    cap.release()
+    out.release()
+    logger.success(f"Finished: {output_path}")
 
 
 def process_pipeline(input_json: str, output_dir: str):
     setup_logger()
 
-    # 1. Load List of Videos
     if not os.path.exists(input_json):
-        logger.error(f"Input JSON list not found: {input_json}")
+        logger.error(f"Input JSON not found: {input_json}")
         sys.exit(1)
 
     with open(input_json, "r") as f:
         video_paths = json.load(f)
 
-    if not video_paths:
-        logger.warning("Video list is empty. Nothing to process.")
-        return
-
-    # 2. Initialize Ray
     initialize_ray()
     os.makedirs(output_dir, exist_ok=True)
 
-    # 3. Process
-    logger.info(f"Starting distributed augmentation for {len(video_paths)} videos...")
-
     for video_path in video_paths:
-        logger.info(f"Processing: {os.path.basename(video_path)}")
-
-        # Ingestion
-        frames_list = video_to_frames(video_path)
-        if not frames_list:
-            continue
-
-        # Ray Processing
-        # We process one video's frames in parallel, then move to the next video
-        # (This prevents memory overflow if we tried to load ALL videos into Ray at once)
-        ds = ray.data.from_items(frames_list)
-        augmented_ds = ds.map(apply_augmentation)
-        results = augmented_ds.take_all()
-
-        # Write Output
         basename = os.path.splitext(os.path.basename(video_path))[0]
         output_path = os.path.join(output_dir, f"{basename}_aug.mp4")
-        write_frames_to_video(results, output_path)
+
+        # Use the streaming function
+        process_video_streaming(video_path, output_path)
 
     ray.shutdown()
-    logger.info("Pipeline finished successfully.")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run Ray Augmentation pipeline.")
-    parser.add_argument(
-        "--input_json", required=True, help="Path to JSON list of videos to process"
-    )
-    parser.add_argument(
-        "--output_dir", required=True, help="Directory to save augmented videos"
-    )
-
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input_json", required=True)
+    parser.add_argument("--output_dir", required=True)
     args = parser.parse_args()
 
     process_pipeline(args.input_json, args.output_dir)
