@@ -1,12 +1,14 @@
+import argparse
+import json
 import os
 import sys
-import json
-import argparse
-from loguru import logger
-import numpy as np
-import cv2
+
 import albumentations as A
+
+# pylint: disable=no-member
+import cv2
 import ray
+from loguru import logger
 
 
 def setup_logger():

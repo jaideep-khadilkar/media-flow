@@ -1,8 +1,8 @@
-from docker.types import Mount
+from datetime import datetime, timedelta
+
 from airflow import DAG
 from airflow.providers.docker.operators.docker import DockerOperator
-from airflow.operators.bash import BashOperator
-from datetime import datetime, timedelta
+from docker.types import Mount
 
 # Constants
 REPO_PATH_ON_HOST = "C:/Users/iamja/Documents/GitHub/media-flow"  # Update if needed
@@ -78,4 +78,5 @@ with DAG(
         mount_tmp_dir=False,
     )
 
+    # pylint: disable=pointless-statement
     scan_videos >> filter_videos >> augment_videos
