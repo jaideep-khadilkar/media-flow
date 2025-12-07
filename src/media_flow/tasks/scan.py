@@ -1,8 +1,9 @@
-import sys
-import os
+import argparse
 import glob
 import json
-import argparse
+import os
+import sys
+
 from loguru import logger
 
 
