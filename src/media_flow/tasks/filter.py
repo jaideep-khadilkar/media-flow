@@ -1,9 +1,15 @@
 import argparse
-import json
 import os
 import sys
 
+import psycopg2
 from loguru import logger
+
+# Database Connection Details (pulled from environment)
+DB_HOST = os.environ.get("DB_HOST")
+DB_NAME = os.environ.get("DB_NAME")
+DB_USER = os.environ.get("DB_USER")
+DB_PASSWORD = os.environ.get("DB_PASSWORD")
 
 
 def setup_logger():
@@ -15,50 +21,68 @@ def setup_logger():
     )
 
 
-def filter_videos(input_json: str, output_json: str, keyword: str):
-    logger.info(f"Reading video list from: {input_json}")
+def filter_and_mark_videos(
+    min_width: int, max_duration: int, status_column: str = "is_quality_video"
+):
+    """Queries DB for videos meeting filtering criteria and updates a status column."""
 
-    if not os.path.exists(input_json):
-        logger.error(f"Input JSON not found: {input_json}")
+    if not all([DB_HOST, DB_NAME, DB_USER, DB_PASSWORD]):
+        logger.error("Missing required DB environment variables.")
         sys.exit(1)
 
-    with open(input_json, "r") as f:
-        video_list = json.load(f)
+    conn = None
+    try:
+        conn = psycopg2.connect(
+            host=DB_HOST, database=DB_NAME, user=DB_USER, password=DB_PASSWORD
+        )
+        cursor = conn.cursor()
 
-    logger.info(f"Filtering {len(video_list)} videos with keyword: '{keyword}'")
+        # NOTE: The status_column (is_quality_video) is assumed to be created by the setup DAG.
 
-    # Filter logic: Check if keyword is in the filename (not the full path)
-    filtered_list = [
-        vid for vid in video_list if keyword.lower() in os.path.basename(vid).lower()
-    ]
+        # Step 1: Reset the status of all videos to FALSE before running new filter (optional, but clean)
+        # This prevents old flags from sticking if criteria change.
+        reset_query = f"UPDATE video_metadata SET {status_column} = FALSE;"
+        cursor.execute(reset_query)
+        conn.commit()
 
-    logger.info(f"Retained {len(filtered_list)} videos after filtering.")
+        # Step 2: Identify and mark videos that satisfy the criteria
+        # The criteria uses populated metadata (width, duration_sec).
+        update_query = f"""
+            UPDATE video_metadata
+            SET {status_column} = TRUE
+            WHERE width >= %s
+              AND duration_sec <= %s
+              AND duration_sec IS NOT NULL;
+        """
 
-    # Ensure output directory exists
-    os.makedirs(os.path.dirname(output_json), exist_ok=True)
+        cursor.execute(update_query, (min_width, max_duration))
+        count = cursor.rowcount
+        conn.commit()
 
-    with open(output_json, "w") as f:
-        json.dump(filtered_list, f, indent=2)
+        logger.success(
+            f"Filtering complete. Marked {count} videos as {status_column}=TRUE."
+        )
 
-    logger.success(f"Filtered list saved to: {output_json}")
+    except psycopg2.Error as e:
+        logger.error(f"DB Error during filtering and marking: {e}")
+        if conn:
+            conn.rollback()
+        raise
+    finally:
+        if conn:
+            conn.close()
 
 
 if __name__ == "__main__":
     setup_logger()
-
-    parser = argparse.ArgumentParser(description="Filter video list by keyword.")
+    parser = argparse.ArgumentParser(description="Filter videos based on DB metadata.")
     parser.add_argument(
-        "--input_json", required=True, help="Path to input JSON video list"
+        "--min_width", type=int, default=360, help="Minimum width for filtering"
     )
     parser.add_argument(
-        "--output_json", required=True, help="Path to save filtered JSON list"
-    )
-    parser.add_argument(
-        "--keyword",
-        default="",
-        help="Keyword to filter by (default: empty = no filter)",
+        "--max_duration", type=int, default=120, help="Maximum duration in seconds"
     )
 
     args = parser.parse_args()
 
-    filter_videos(args.input_json, args.output_json, args.keyword)
+    filter_and_mark_videos(args.min_width, args.max_duration)

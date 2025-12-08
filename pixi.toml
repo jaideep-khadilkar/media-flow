@@ -16,6 +16,7 @@ loguru = ">=0.7.3,<0.8"
 scikit-image = ">=0.25.2,<0.26"
 albumentations = ">=2.0.8,<3"
 cryptography = ">=46.0.3,<47"
+psycopg2 = ">=2.9.10,<3"
 
 [tasks]
 start = "python3 main.py"
