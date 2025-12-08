@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pendulum
-
 from airflow.models.dag import DAG
 from airflow.providers.postgres.operators.postgres import PostgresOperator
 

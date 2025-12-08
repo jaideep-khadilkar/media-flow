@@ -2,9 +2,9 @@ import argparse
 import glob
 import os
 import sys
-import psycopg2
 from typing import Optional
 
+import psycopg2
 from loguru import logger
 
 # Database Connection Details (pulled from environment)

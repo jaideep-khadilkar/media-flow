@@ -2,14 +2,13 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime
-from typing import Dict, Any, List, Optional
-import psycopg2
+from typing import Dict, Optional
 
 import albumentations as A
 
 # pylint: disable=no-member
 import cv2
+import psycopg2
 import ray
 from loguru import logger
 

@@ -1,6 +1,7 @@
+import argparse
 import os
 import sys
-import argparse
+
 import psycopg2
 from loguru import logger
 
