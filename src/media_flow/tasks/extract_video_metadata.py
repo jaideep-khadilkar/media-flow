@@ -5,15 +5,11 @@ import argparse
 import subprocess
 from datetime import datetime
 from typing import Dict, Any, List, Optional
-
-# --- Database Dependencies ---
+import ray
 import psycopg2
 from loguru import logger
 
-# --- Ray Dependencies ---
-import ray
-
-# NOTE: The database credentials will be passed via environment variables
+# Database Connection Details (pulled from environment)
 DB_HOST = os.environ.get("DB_HOST")
 DB_NAME = os.environ.get("DB_NAME")
 DB_USER = os.environ.get("DB_USER")
@@ -29,12 +25,17 @@ def setup_logger():
     )
 
 
-# --- Ray Remote Function for Extraction ---
+def initialize_ray():
+    # Only initializes Ray locally within the container if not connected
+    try:
+        ray.init(address="auto", ignore_reinit_error=True)
+    except Exception:
+        ray.init(local_mode=False)
 
 
 @ray.remote
 def run_ffprobe_extraction(video_path: str) -> Optional[Dict[str, Any]]:
-    """Executes ffprobe on a single video path and returns structured metadata."""
+    # ... (run_ffprobe_extraction logic remains the same, assumes correct FFprobe path)
     command = [
         "ffprobe",
         "-v",
@@ -51,9 +52,8 @@ def run_ffprobe_extraction(video_path: str) -> Optional[Dict[str, Any]]:
     try:
         result = subprocess.run(
             command, capture_output=True, text=True, check=True, timeout=10
-        )  # 10s timeout
+        )
         data = json.loads(result.stdout)
-
         stream_info = data.get("streams", [{}])[0]
 
         # Calculate FPS
@@ -63,7 +63,6 @@ def run_ffprobe_extraction(video_path: str) -> Optional[Dict[str, Any]]:
 
         metadata = {
             "original_path": video_path,
-            "filename": os.path.basename(video_path),
             "duration_sec": round(float(stream_info.get("duration", 0)), 3),
             "frame_rate": frame_rate,
             "width": int(stream_info.get("width", 0)),
@@ -72,7 +71,6 @@ def run_ffprobe_extraction(video_path: str) -> Optional[Dict[str, Any]]:
             "color_space": stream_info.get("pix_fmt"),
         }
         return metadata
-
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
         logger.error(
             f"FFprobe failed for {video_path}. Error: {e.stderr if hasattr(e, 'stderr') else e}"
@@ -83,130 +81,112 @@ def run_ffprobe_extraction(video_path: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-# --- Bulk Insertion Function ---
+def process_and_update_metadata():
+    """Queries DB for pending videos, runs FFprobe, and updates metadata."""
 
-
-def insert_metadata_to_db(metadata_list: List[Dict[str, Any]]):
-    """Inserts a list of extracted metadata records into the PostgreSQL database."""
-
-    valid_records = [m for m in metadata_list if m]
-    if not valid_records:
-        logger.info("No valid metadata records to insert.")
-        return
+    if not all([DB_HOST, DB_NAME, DB_USER, DB_PASSWORD]):
+        logger.error("Missing required DB environment variables.")
+        sys.exit(1)
 
     conn = None
+    id_path_map = {}
+
+    # 1. Fetch file paths for processing (videos missing metadata)
     try:
-        logger.info(f"Attempting to connect to DB: {DB_HOST}/{DB_NAME}")
         conn = psycopg2.connect(
             host=DB_HOST, database=DB_NAME, user=DB_USER, password=DB_PASSWORD
         )
         cursor = conn.cursor()
 
-        columns = (
-            "original_path",
-            "filename",
-            "duration_sec",
-            "frame_rate",
-            "width",
-            "height",
-            "codec_name",
-            "color_space",
+        # Select video_id and original_path for videos that are missing duration (metadata)
+        query = "SELECT video_id, original_path FROM video_metadata WHERE duration_sec IS NULL;"
+        cursor.execute(query)
+
+        id_path_map = {path: video_id for video_id, path in cursor.fetchall()}
+        paths_to_process = list(id_path_map.keys())
+
+        logger.info(
+            f"Found {len(paths_to_process)} videos pending FFprobe metadata extraction."
         )
+        conn.close()
 
-        values = [
-            (
-                record["original_path"],
-                record["filename"],
-                record["duration_sec"],
-                record["frame_rate"],
-                record["width"],
-                record["height"],
-                record["codec_name"],
-                record["color_space"],
-            )
-            for record in valid_records
-        ]
+    except psycopg2.Error as e:
+        logger.error(f"DB Error fetching pending paths: {e}")
+        if conn:
+            conn.close()
+        raise
 
-        # Use UPSERT to handle re-scans of the same video path
-        insert_statement = f"""
-            INSERT INTO video_metadata ({', '.join(columns)}) 
-            VALUES ({', '.join(['%s'] * len(columns))})
-            ON CONFLICT (original_path) DO UPDATE SET
-                duration_sec = EXCLUDED.duration_sec,
-                frame_rate = EXCLUDED.frame_rate,
-                width = EXCLUDED.width,
-                height = EXCLUDED.height,
-                codec_name = EXCLUDED.codec_name,
-                color_space = EXCLUDED.color_space,
+    if not paths_to_process:
+        logger.warning("No videos require metadata extraction. Exiting successfully.")
+        return
+
+    # 2. Initialize Ray and Run Distributed Extraction
+    initialize_ray()
+
+    futures = [run_ffprobe_extraction.remote(path) for path in paths_to_process]
+    all_metadata_list = ray.get(futures)
+    ray.shutdown()
+
+    # 3. Assemble and Execute Bulk DB Update
+    valid_updates = []
+    for metadata in all_metadata_list:
+        if metadata is not None:
+            path = metadata["original_path"]
+            video_id = id_path_map.get(path)
+            if video_id is not None:
+                # Update tuple order: duration, frame_rate, width, height, codec_name, color_space, video_id
+                update_tuple = (
+                    metadata["duration_sec"],
+                    metadata["frame_rate"],
+                    metadata["width"],
+                    metadata["height"],
+                    metadata["codec_name"],
+                    metadata["color_space"],
+                    video_id,
+                )
+                valid_updates.append(update_tuple)
+
+    if not valid_updates:
+        logger.warning("No valid metadata collected for database update.")
+        return
+
+    conn = None
+    try:
+        conn = psycopg2.connect(
+            host=DB_HOST, database=DB_NAME, user=DB_USER, password=DB_PASSWORD
+        )
+        cursor = conn.cursor()
+
+        # Update video_metadata table
+        update_statement = """
+            UPDATE video_metadata SET
+                duration_sec = %s,
+                frame_rate = %s,
+                width = %s,
+                height = %s,
+                codec_name = %s,
+                color_space = %s,
                 scan_date = CURRENT_TIMESTAMP
+            WHERE video_id = %s;
         """
 
-        cursor.executemany(insert_statement, values)
+        cursor.executemany(update_statement, valid_updates)
         conn.commit()
         logger.success(
-            f"Successfully inserted/updated {len(valid_records)} metadata records."
+            f"Successfully updated metadata for {len(valid_updates)} videos."
         )
 
     except psycopg2.Error as e:
-        logger.error(f"Database Error during bulk insert: {e}")
+        logger.error(f"DB Error during metadata update: {e}")
         if conn:
             conn.rollback()
-        raise  # Re-raise the error to fail the Airflow task
+        raise
     finally:
         if conn:
             conn.close()
 
 
-# --- Main Orchestration ---
-
 if __name__ == "__main__":
     setup_logger()
-
-    parser = argparse.ArgumentParser(
-        description="Extract FFprobe metadata using Ray and insert into DB."
-    )
-    parser.add_argument(
-        "--input_json",
-        required=True,
-        help="Path to the JSON file containing the list of video paths",
-    )
-    args = parser.parse_args()
-
-    # 0. Check Database Environment Variables
-    if not all([DB_HOST, DB_NAME, DB_USER, DB_PASSWORD]):
-        logger.error(
-            "Missing required DB environment variables (DB_HOST, DB_NAME, DB_USER, DB_PASSWORD)."
-        )
-        sys.exit(1)
-
-    # 1. Load Video Paths
-    if not os.path.exists(args.input_json):
-        logger.error(f"Input JSON file not found: {args.input_json}")
-        sys.exit(1)
-
-    with open(args.input_json, "r") as f:
-        video_paths: List[str] = json.load(f)
-
-    if not video_paths:
-        logger.warning("Input video list is empty. Skipping extraction.")
-        sys.exit(0)
-
-    # 2. Initialize Ray
-    try:
-        # Connect to a running Ray head or start local Ray (depending on your worker image setup)
-        ray.init(address="auto", ignore_reinit_error=True)
-        logger.info(f"Ray initialized. Total paths to process: {len(video_paths)}")
-    except Exception as e:
-        ray.init(local_mode=False)
-        logger.warning("Ray auto-connect failed, started a local Ray instance.")
-        # logger.error(f"Failed to initialize Ray: {e}")
-        # sys.exit(1)
-
-    # 3. Distributed Extraction
-    futures = [run_ffprobe_extraction.remote(path) for path in video_paths]
-    all_metadata_list = ray.get(futures)
-
-    ray.shutdown()
-
-    # 4. Bulk DB Insertion (runs on the orchestrating container)
-    insert_metadata_to_db(all_metadata_list)
+    # Note: No custom arguments needed, the script reads all pending work from the DB.
+    process_and_update_metadata()
