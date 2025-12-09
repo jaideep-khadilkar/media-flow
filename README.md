@@ -29,6 +29,9 @@ A simple video processing pipeline using Airflow, Ray, FFmpeg, and PostgreSQL. I
     - video_metadata (stores original files + extracted metadata)
     - augmented_videos (stores augmented outputs + parameters)
 
+    ![Pipeline Overview](docs/images/db_schema_setup_dag.png)
+
+
 - Run Video Pipeline
   - Unpause video_db_pipeline in Airflow UI.
   - Trigger run; tasks:
@@ -36,6 +39,8 @@ A simple video processing pipeline using Airflow, Ray, FFmpeg, and PostgreSQL. I
     2. extract_video_metadata: runs ffprobe via Ray workers
     3. filter_videos: marks is_quality_video based on width/duration
     4. augment_videos: produces augmented video outputs in /app/data/augmented and writes records
+
+    ![Pipeline Overview](docs/images/video_db_pipeline.png)
 
 - CLI Script Usage (inside container)
   - scan.py:
