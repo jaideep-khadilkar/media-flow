@@ -70,7 +70,8 @@ x-airflow-common:
     # WARNING: Use _PIP_ADDITIONAL_REQUIREMENTS option ONLY for a quick checks
     # for other purpose (development, test and especially production usage) build/extend Airflow image.
     _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-}
-    AIRFLOW_CONN_POSTGRES_DEFAULT: "postgresql://airflow:airflow@postgres/airflow"
+    # Point postgres_default to the custom application database
+    AIRFLOW_CONN_POSTGRES_DEFAULT: "postgresql://airflow:airflow@postgres/media_flow_db"
     # The following line can be used to set a custom config file, stored in the local config folder
     # If you want to use it, outcomment it and replace airflow.cfg with the name of your config file
     # AIRFLOW_CONFIG: '/opt/airflow/config/airflow.cfg'
@@ -104,6 +105,8 @@ services:
       POSTGRES_DB: airflow
     volumes:
       - postgres-db-volume:/var/lib/postgresql/data
+      # Add init scripts to create the custom app database
+      - ${AIRFLOW_PROJ_DIR:-.}/docker-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "airflow"]
       interval: 10s
