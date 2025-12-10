@@ -1,29 +1,20 @@
-# Use the official Ubuntu 22.04 image as our base
 FROM ubuntu:22.04
 
-# Set the working directory for subsequent commands
 WORKDIR /app
 
 # Install System Dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 \
-    python3-pip \
     curl \
-    ffmpeg \
     git \
-    # Add openssh-client to enable git push (ssh protocol)
     openssh-client \
-    # Clean up apt lists to reduce image size
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Download and install the Pixi executable
-RUN curl -fsSL https://pixi.sh/install.sh | bash
+# Install pixi directly into /usr/local/bin (already on PATH)
+RUN curl -fsSL https://pixi.sh/install.sh | PIXI_BIN_DIR=/usr/local/bin PIXI_NO_PATH_UPDATE=1 bash
 
-# Add Pixi's installation directory to the PATH for the current shell and all subsequent layers.
-ENV PATH="/root/.pixi/bin:$PATH"
-
-# Only copy pixi.toml needed for environment build
+# Copy env spec
 COPY pixi.toml ./
 
-# Install Python dependencies using Pixi
-RUN /root/.pixi/bin/pixi install
+# Install dependencies using pixi
+RUN pixi install
