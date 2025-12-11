@@ -1,4 +1,4 @@
-FROM ubuntu:22.04
+FROM nvidia/cuda:12.2.0-base-ubuntu22.04
 
 WORKDIR /app
 
@@ -17,4 +17,4 @@ RUN curl -fsSL https://pixi.sh/install.sh | PIXI_BIN_DIR=/usr/local/bin bash
 COPY pixi.toml ./
 
 # Install dependencies using pixi
-RUN pixi install
+RUN CONDA_OVERRIDE_CUDA=12.2 pixi install
