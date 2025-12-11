@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 
 from airflow import DAG
 from airflow.providers.docker.operators.docker import DockerOperator
+from docker.types import DeviceRequest
 from docker.types import Mount
 
 # Constants
@@ -90,6 +91,7 @@ with DAG(
         image=WORKER_IMAGE,
         # Output directory is needed to save the augmented files
         command=f"pixi run python src/media_flow/tasks/augment.py --output_dir {DATA_PATH}/augmented",
+        device_requests=[DeviceRequest(count=-1, capabilities=[["gpu"]])],
         mounts=SHARED_MOUNTS,
         mount_tmp_dir=False,
         environment=DB_ENV_VARS,

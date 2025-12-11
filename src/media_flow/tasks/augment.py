@@ -1,23 +1,22 @@
 import argparse
 import json
 import os
+import subprocess as sp
 import sys
-from typing import Dict, Optional, List
+from typing import Dict, List, Optional
 
 import albumentations as A
-import torch
-import numpy as np
+import decord
 import ffmpeg
-import subprocess as sp
-
+import numpy as np
 import psycopg2
 import ray
+import torch
 from loguru import logger
-import decord
 
 # Decord needs to be configured to use CPU for some ops if not explicitly on GPU
 decord.bridge.set_bridge("torch")
-decord.cpu.set_num_threads(1)
+# decord.set_num_threads(1)
 
 # Database Connection Details (pulled from environment)
 DB_HOST = os.environ.get("DB_HOST")
@@ -212,7 +211,7 @@ def process_video_streaming(
     """
     try:
         # Initialize Decord VideoReader to output PyTorch tensors and use GPU
-        vr = decord.VideoReader(video_path, ctx=decord.gpu(0), use_py_array=True)
+        vr = decord.VideoReader(video_path, ctx=decord.cpu(0))
     except Exception as e:
         logger.error(f"Cannot open or initialize Decord for {video_path}: {e}")
         return {
@@ -239,9 +238,9 @@ def process_video_streaming(
             futures = []
 
             # Stream frames using Decord indices
-            for frame_idx in range(len(vr)):
+            for frame_idx, frame_tensor in enumerate(vr):
                 # Read frame as PyTorch tensor on GPU
-                frame_tensor = vr[frame_idx]
+                # frame_tensor = vr[frame_idx]
 
                 current_batch.append({"frame_id": frame_idx, "image": frame_tensor})
                 frame_id += 1
