@@ -13,8 +13,6 @@ POSTGRES_CONN_ID = "postgres_default"
 
 default_args = {
     "owner": "data_engineer",
-    "retries": 1,
-    "retry_delay": timedelta(minutes=5),
 }
 
 # Common configuration for DockerOperator environment variables
@@ -32,9 +30,9 @@ SHARED_MOUNTS = [
 ]
 
 with DAG(
-    dag_id="video_db_pipeline",
+    dag_id="video_pipeline",
     start_date=datetime(2025, 11, 1),
-    schedule_interval=timedelta(days=1),
+    schedule=None,  # Run manually or via API only
     catchup=False,
     default_args=default_args,
 ) as dag:

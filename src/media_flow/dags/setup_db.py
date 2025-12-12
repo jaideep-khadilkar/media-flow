@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS augmented_videos (
 """
 
 with DAG(
-    dag_id="db_schema_setup_dag",
+    dag_id="setup_db",
     start_date=pendulum.datetime(2025, 1, 1, tz="UTC"),
     schedule=None,  # Run manually or via API only
     catchup=False,
