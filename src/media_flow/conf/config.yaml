@@ -6,3 +6,6 @@ data_root: "/app/data"
 scan:
   input_dir: "${data_root}/raw"
   max_videos: 5
+
+augment:
+  output_dir: "${data_root}/processed"

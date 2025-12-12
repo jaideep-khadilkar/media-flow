@@ -88,7 +88,7 @@ with DAG(
         task_id="augment_videos",
         image=WORKER_IMAGE,
         # Output directory is needed to save the augmented files
-        command=f"pixi run python src/media_flow/tasks/augment.py --output_dir {DATA_PATH}/augmented",
+        command=f"pixi run python src/media_flow/tasks/augment.py",
         mounts=SHARED_MOUNTS,
         mount_tmp_dir=False,
         environment=DB_ENV_VARS,
