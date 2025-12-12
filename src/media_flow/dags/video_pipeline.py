@@ -43,8 +43,7 @@ with DAG(
     scan_videos = DockerOperator(
         task_id="scan_videos",
         image=WORKER_IMAGE,
-        # Max videos set to 50 for development testing
-        command=f"pixi run python src/media_flow/tasks/scan.py --input_dir {DATA_PATH}/raw --max_videos 20",
+        command=f"pixi run python src/media_flow/tasks/scan.py",
         mounts=SHARED_MOUNTS,
         mount_tmp_dir=False,
         environment=DB_ENV_VARS,
