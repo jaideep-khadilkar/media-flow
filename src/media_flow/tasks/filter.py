@@ -1,9 +1,10 @@
-import argparse
 import os
 import sys
 
+import hydra
 import psycopg2
 from loguru import logger
+from omegaconf import DictConfig
 
 # Database Connection Details (pulled from environment)
 DB_HOST = os.environ.get("DB_HOST")
@@ -21,10 +22,13 @@ def setup_logger():
     )
 
 
-def filter_and_mark_videos(
-    min_width: int, max_duration: int, status_column: str = "is_quality_video"
-):
+@hydra.main(version_base=None, config_path="../conf", config_name="config")
+def filter_and_mark_videos(cfg: DictConfig):
     """Queries DB for videos meeting filtering criteria and updates a status column."""
+
+    min_width = cfg.filter.get("min_width", 360)
+    max_duration = cfg.filter.get("max_duration_sec", 60)
+    status_column = cfg.filter.get("status_column", "is_quality_video")
 
     if not all([DB_HOST, DB_NAME, DB_USER, DB_PASSWORD]):
         logger.error("Missing required DB environment variables.")
@@ -75,14 +79,4 @@ def filter_and_mark_videos(
 
 if __name__ == "__main__":
     setup_logger()
-    parser = argparse.ArgumentParser(description="Filter videos based on DB metadata.")
-    parser.add_argument(
-        "--min_width", type=int, default=360, help="Minimum width for filtering"
-    )
-    parser.add_argument(
-        "--max_duration", type=int, default=120, help="Maximum duration in seconds"
-    )
-
-    args = parser.parse_args()
-
-    filter_and_mark_videos(args.min_width, args.max_duration)
+    filter_and_mark_videos()

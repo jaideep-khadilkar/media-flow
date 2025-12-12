@@ -13,8 +13,6 @@ POSTGRES_CONN_ID = "postgres_default"
 
 default_args = {
     "owner": "data_engineer",
-    "retries": 1,
-    "retry_delay": timedelta(minutes=5),
 }
 
 # Common configuration for DockerOperator environment variables
@@ -32,9 +30,9 @@ SHARED_MOUNTS = [
 ]
 
 with DAG(
-    dag_id="video_db_pipeline",
+    dag_id="video_pipeline",
     start_date=datetime(2025, 11, 1),
-    schedule_interval=timedelta(days=1),
+    schedule=None,  # Run manually or via API only
     catchup=False,
     default_args=default_args,
 ) as dag:
@@ -43,8 +41,7 @@ with DAG(
     scan_videos = DockerOperator(
         task_id="scan_videos",
         image=WORKER_IMAGE,
-        # Max videos set to 50 for development testing
-        command=f"pixi run python src/media_flow/tasks/scan.py --input_dir {DATA_PATH}/raw --max_videos 20",
+        command="pixi run python src/media_flow/tasks/scan.py",
         mounts=SHARED_MOUNTS,
         mount_tmp_dir=False,
         environment=DB_ENV_VARS,
@@ -55,11 +52,11 @@ with DAG(
     )
 
     # --- 2. Extract Metadata Task (Reads pending, Updates video_metadata) ---
-    extract_video_metadata = DockerOperator(
-        task_id="extract_video_metadata",
+    extract_metadata = DockerOperator(
+        task_id="extract_metadata",
         image=WORKER_IMAGE,
         # No arguments needed; reads all pending work from the DB.
-        command="pixi run python src/media_flow/tasks/extract_video_metadata.py",
+        command="pixi run python src/media_flow/tasks/extract_metadata.py",
         mounts=SHARED_MOUNTS,
         mount_tmp_dir=False,
         environment=DB_ENV_VARS,
@@ -74,7 +71,7 @@ with DAG(
         task_id="filter_videos",
         image=WORKER_IMAGE,
         # Filtering criteria are arguments
-        command=f"pixi run python src/media_flow/tasks/filter.py --min_width 360 --max_duration 60",
+        command="pixi run python src/media_flow/tasks/filter.py",
         mounts=SHARED_MOUNTS,
         mount_tmp_dir=False,
         environment=DB_ENV_VARS,
@@ -89,7 +86,7 @@ with DAG(
         task_id="augment_videos",
         image=WORKER_IMAGE,
         # Output directory is needed to save the augmented files
-        command=f"pixi run python src/media_flow/tasks/augment.py --output_dir {DATA_PATH}/augmented",
+        command="pixi run python src/media_flow/tasks/augment.py",
         mounts=SHARED_MOUNTS,
         mount_tmp_dir=False,
         environment=DB_ENV_VARS,
@@ -101,4 +98,4 @@ with DAG(
 
     # --- Final Flow ---
     # pylint: disable=pointless-statement
-    scan_videos >> extract_video_metadata >> filter_videos >> augment_videos
+    scan_videos >> extract_metadata >> filter_videos >> augment_videos

@@ -36,7 +36,7 @@ A simple video processing pipeline using Airflow, Ray, FFmpeg, and PostgreSQL. I
   - Unpause video_db_pipeline in Airflow UI.
   - Trigger run; tasks:
     1. scan_videos: inserts new files from /app/data/raw
-    2. extract_video_metadata: runs ffprobe via Ray workers
+    2. extract_metadata: runs ffprobe via Ray workers
     3. filter_videos: marks is_quality_video based on width/duration
     4. augment_videos: produces augmented video outputs in /app/data/augmented and writes records
 
@@ -45,8 +45,8 @@ A simple video processing pipeline using Airflow, Ray, FFmpeg, and PostgreSQL. I
 - CLI Script Usage (inside container)
   - scan.py:
     - `python src/media_flow/tasks/scan.py --input_dir /app/data/raw --max_videos 20`
-  - extract_video_metadata.py:
-    - `python src/media_flow/tasks/extract_video_metadata.py`
+  - extract_metadata.py:
+    - `python src/media_flow/tasks/extract_metadata.py`
   - filter.py:
     - `python src/media_flow/tasks/filter.py --min_width 360 --max_duration 60`
   - augment.py:
@@ -70,7 +70,7 @@ A simple video processing pipeline using Airflow, Ray, FFmpeg, and PostgreSQL. I
   - Worker image: Built from Dockerfile with Pixi and Python deps
   - Tasks:
     - scan.py: file discovery and DB insertion
-    - extract_video_metadata.py: ffprobe metadata via Ray
+    - extract_metadata.py: ffprobe metadata via Ray
     - filter.py: DB-side filtering updates
     - augment.py: frame-wise augmentation via Ray and OpenCV
   - Data flow:
@@ -102,7 +102,7 @@ A simple video processing pipeline using Airflow, Ray, FFmpeg, and PostgreSQL. I
   - scan.py
     - Scans input_dir for video files.
     - Inserts (original_path absolute, filename) with ON CONFLICT DO NOTHING.
-  - extract_video_metadata.py
+  - extract_metadata.py
     - Selects videos where duration_sec IS NULL.
     - Ray remote ffprobe returns duration, frame_rate, width, height, codec_name, color_space.
     - Bulk UPDATE sets scan_date = CURRENT_TIMESTAMP.

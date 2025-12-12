@@ -1,0 +1,30 @@
+hydra:
+  job:
+    chdir: false
+  run:
+    dir: logs/hydra/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: logs/hydra/multirun
+    subdir: ${hydra.job.num}
+
+defaults:
+  - _self_
+
+data_root: "/app/data"
+
+scan:
+  input_dir: "${data_root}/raw"
+  max_videos: 50
+  video_extensions:
+    - ".mp4"
+    - ".avi"
+    - ".mov"
+    - ".mkv"
+
+filter:
+  min_width: 360
+  max_duration_sec: 10
+  status_column: "is_quality_video"
+
+augment:
+  output_dir: "${data_root}/processed"

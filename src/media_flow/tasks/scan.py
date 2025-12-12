@@ -1,11 +1,11 @@
-import argparse
 import glob
 import os
 import sys
-from typing import Optional
 
+import hydra
 import psycopg2
 from loguru import logger
+from omegaconf import DictConfig
 
 # Database Connection Details (pulled from environment)
 DB_HOST = os.environ.get("DB_HOST")
@@ -23,19 +23,22 @@ def setup_logger():
     )
 
 
-def scan_and_insert_videos(input_dir: str, max_videos: Optional[int] = None):
+def scan_and_insert_videos(cfg: DictConfig):
     """Scans the directory and inserts paths of NEW videos into DB."""
+
+    input_dir = cfg.scan.input_dir
+    max_videos = cfg.scan.max_videos
+    extensions = cfg.scan.video_extensions
 
     if not all([DB_HOST, DB_NAME, DB_USER, DB_PASSWORD]):
         logger.error("Missing required DB environment variables.")
         sys.exit(1)
 
     # 1. Scan Local Directory
-    extensions = ("*.mp4", "*.avi", "*.mov", "*.mkv")
     video_files = []
     for ext in extensions:
         # Use os.path.abspath to ensure unique path integrity in the DB
-        found = glob.glob(os.path.join(input_dir, ext))
+        found = glob.glob(os.path.join(input_dir, f"*{ext}"))
         video_files.extend(found)
 
     video_files.sort()
@@ -82,21 +85,16 @@ def scan_and_insert_videos(input_dir: str, max_videos: Optional[int] = None):
             conn.close()
 
 
-if __name__ == "__main__":
+@hydra.main(version_base=None, config_path="../conf", config_name="config")
+def main(cfg: DictConfig):
     setup_logger()
-    parser = argparse.ArgumentParser(
-        description="Scan folder and insert new videos into DB."
-    )
-    parser.add_argument(
-        "--input_dir", required=True, help="Path to the folder containing raw videos"
-    )
-    parser.add_argument(
-        "--max_videos", type=int, default=None, help="Max videos for dev testing"
-    )
-    args = parser.parse_args()
 
-    if not os.path.exists(args.input_dir):
-        logger.error(f"Input directory does not exist: {args.input_dir}")
+    if not os.path.exists(cfg.scan.input_dir):
+        logger.error(f"Input directory does not exist: {cfg.scan.input_dir}")
         sys.exit(1)
 
-    scan_and_insert_videos(args.input_dir, args.max_videos)
+    scan_and_insert_videos(cfg)
+
+
+if __name__ == "__main__":
+    main()

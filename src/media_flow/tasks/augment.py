@@ -1,4 +1,3 @@
-import argparse
 import json
 import os
 import sys
@@ -8,9 +7,11 @@ import albumentations as A
 
 # pylint: disable=no-member
 import cv2
+import hydra
 import psycopg2
 import ray
 from loguru import logger
+from omegaconf import DictConfig
 
 # Database Connection Details (pulled from environment)
 DB_HOST = os.environ.get("DB_HOST")
@@ -197,7 +198,9 @@ def insert_augmentation_record(record: Dict):
             conn.close()
 
 
-def augment_pipeline(output_dir: str):
+def augment_pipeline(cfg: DictConfig):
+
+    output_dir = cfg.augment.output_dir
     setup_logger()
 
     if not all([DB_HOST, DB_NAME, DB_USER, DB_PASSWORD]):
@@ -276,9 +279,10 @@ def augment_pipeline(output_dir: str):
     ray.shutdown()
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--output_dir", required=True)
-    args = parser.parse_args()
+@hydra.main(version_base=None, config_path="../conf", config_name="config")
+def main(cfg: DictConfig):
+    augment_pipeline(cfg)
 
-    augment_pipeline(args.output_dir)
+
+if __name__ == "__main__":
+    main()
