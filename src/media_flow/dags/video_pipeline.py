@@ -41,7 +41,7 @@ with DAG(
     scan_videos = DockerOperator(
         task_id="scan_videos",
         image=WORKER_IMAGE,
-        command=f"pixi run python src/media_flow/tasks/scan.py",
+        command="pixi run python src/media_flow/tasks/scan.py",
         mounts=SHARED_MOUNTS,
         mount_tmp_dir=False,
         environment=DB_ENV_VARS,
@@ -71,7 +71,7 @@ with DAG(
         task_id="filter_videos",
         image=WORKER_IMAGE,
         # Filtering criteria are arguments
-        command=f"pixi run python src/media_flow/tasks/filter.py --min_width 360 --max_duration 60",
+        command="pixi run python src/media_flow/tasks/filter.py",
         mounts=SHARED_MOUNTS,
         mount_tmp_dir=False,
         environment=DB_ENV_VARS,
@@ -86,7 +86,7 @@ with DAG(
         task_id="augment_videos",
         image=WORKER_IMAGE,
         # Output directory is needed to save the augmented files
-        command=f"pixi run python src/media_flow/tasks/augment.py",
+        command="pixi run python src/media_flow/tasks/augment.py",
         mounts=SHARED_MOUNTS,
         mount_tmp_dir=False,
         environment=DB_ENV_VARS,
