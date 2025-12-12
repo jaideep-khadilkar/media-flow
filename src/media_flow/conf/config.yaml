@@ -15,6 +15,11 @@ data_root: "/app/data"
 scan:
   input_dir: "${data_root}/raw"
   max_videos: 5
+  video_extensions:
+    - ".mp4"
+    - ".avi"
+    - ".mov"
+    - ".mkv"
 
 augment:
   output_dir: "${data_root}/processed"

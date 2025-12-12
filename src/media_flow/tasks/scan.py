@@ -28,17 +28,17 @@ def scan_and_insert_videos(cfg: DictConfig):
 
     input_dir = cfg.scan.input_dir
     max_videos = cfg.scan.max_videos
+    extensions = cfg.scan.video_extensions
 
     if not all([DB_HOST, DB_NAME, DB_USER, DB_PASSWORD]):
         logger.error("Missing required DB environment variables.")
         sys.exit(1)
 
     # 1. Scan Local Directory
-    extensions = ("*.mp4", "*.avi", "*.mov", "*.mkv")
     video_files = []
     for ext in extensions:
         # Use os.path.abspath to ensure unique path integrity in the DB
-        found = glob.glob(os.path.join(input_dir, ext))
+        found = glob.glob(os.path.join(input_dir, f"*{ext}"))
         video_files.extend(found)
 
     video_files.sort()

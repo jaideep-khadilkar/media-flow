@@ -52,11 +52,11 @@ with DAG(
     )
 
     # --- 2. Extract Metadata Task (Reads pending, Updates video_metadata) ---
-    extract_video_metadata = DockerOperator(
-        task_id="extract_video_metadata",
+    extract_metadata = DockerOperator(
+        task_id="extract_metadata",
         image=WORKER_IMAGE,
         # No arguments needed; reads all pending work from the DB.
-        command="pixi run python src/media_flow/tasks/extract_video_metadata.py",
+        command="pixi run python src/media_flow/tasks/extract_metadata.py",
         mounts=SHARED_MOUNTS,
         mount_tmp_dir=False,
         environment=DB_ENV_VARS,
@@ -98,4 +98,4 @@ with DAG(
 
     # --- Final Flow ---
     # pylint: disable=pointless-statement
-    scan_videos >> extract_video_metadata >> filter_videos >> augment_videos
+    scan_videos >> extract_metadata >> filter_videos >> augment_videos
