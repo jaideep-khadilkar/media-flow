@@ -2,7 +2,7 @@ import json
 import os
 import subprocess
 import sys
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import psycopg2
 import ray
@@ -13,6 +13,9 @@ DB_HOST = os.environ.get("DB_HOST")
 DB_NAME = os.environ.get("DB_NAME")
 DB_USER = os.environ.get("DB_USER")
 DB_PASSWORD = os.environ.get("DB_PASSWORD")
+
+# Configuration
+BATCH_SIZE = 30  # Number of videos to process in a single Ray task
 
 
 def setup_logger():
@@ -25,16 +28,15 @@ def setup_logger():
 
 
 def initialize_ray():
-    # Only initializes Ray locally within the container if not connected
-    try:
-        ray.init(address="auto", ignore_reinit_error=True)
-    except Exception:
-        ray.init(local_mode=False)
+    ray.init(
+        address="ray://ray-head:10001",
+        ignore_reinit_error=True,
+    )
+    print("Connected to existing Ray cluster.")
 
 
-@ray.remote
-def run_ffprobe_extraction(video_path: str) -> Optional[Dict[str, Any]]:
-    # ... (run_ffprobe_extraction logic remains the same, assumes correct FFprobe path)
+# Helper function to process a single video (not remote, run inside the batch worker)
+def _extract_single(video_path: str) -> Optional[Dict[str, Any]]:
     command = [
         "ffprobe",
         "-v",
@@ -49,11 +51,18 @@ def run_ffprobe_extraction(video_path: str) -> Optional[Dict[str, Any]]:
     ]
 
     try:
+        # Reduced timeout as metadata extraction should be instant
         result = subprocess.run(
             command, capture_output=True, text=True, check=True, timeout=10
         )
         data = json.loads(result.stdout)
-        stream_info = data.get("streams", [{}])[0]
+
+        # Handle cases where no stream info is returned
+        if not data.get("streams"):
+            logger.warning(f"No video streams found in {video_path}")
+            return None
+
+        stream_info = data["streams"][0]
 
         # Calculate FPS
         fps_str = stream_info.get("r_frame_rate", "0/1")
@@ -71,17 +80,27 @@ def run_ffprobe_extraction(video_path: str) -> Optional[Dict[str, Any]]:
         }
         return metadata
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-        logger.error(
-            f"FFprobe failed for {video_path}. Error: {e.stderr if hasattr(e, 'stderr') else e}"
-        )
+        # Only log the error string if it exists
+        err_msg = e.stderr if hasattr(e, "stderr") else str(e)
+        logger.error(f"FFprobe failed for {video_path}. Error: {err_msg}")
         return None
     except Exception as e:
         logger.error(f"Unexpected error during extraction for {video_path}: {e}")
         return None
 
 
+# MODIFIED: Remote task now handles a BATCH of paths to reduce scheduling overhead
+@ray.remote
+def extract_metadata_batch(video_paths: List[str]) -> List[Optional[Dict[str, Any]]]:
+    results = []
+    # Loop through the batch locally on the worker
+    for path in video_paths:
+        results.append(_extract_single(path))
+    return results
+
+
 def process_and_update_metadata():
-    """Queries DB for pending videos, runs FFprobe, and updates metadata."""
+    """Queries DB for pending videos, runs FFprobe in batches, and updates metadata."""
 
     if not all([DB_HOST, DB_NAME, DB_USER, DB_PASSWORD]):
         logger.error("Missing required DB environment variables.")
@@ -119,12 +138,30 @@ def process_and_update_metadata():
         logger.warning("No videos require metadata extraction. Exiting successfully.")
         return
 
-    # 2. Initialize Ray and Run Distributed Extraction
+    # 2. Initialize Ray and Run Distributed Extraction in Batches
     initialize_ray()
 
-    futures = [run_ffprobe_extraction.remote(path) for path in paths_to_process]
-    all_metadata_list = ray.get(futures)
+    # Create chunks (batches) of paths
+    # e.g., if BATCH_SIZE=30, creates [[path1...path30], [path31...path60], ...]
+    path_batches = [
+        paths_to_process[i : i + BATCH_SIZE]
+        for i in range(0, len(paths_to_process), BATCH_SIZE)
+    ]
+
+    logger.info(
+        f"Submitting {len(path_batches)} tasks (Batch Size: {BATCH_SIZE}) to Ray..."
+    )
+
+    # Submit batch tasks
+    futures = [extract_metadata_batch.remote(batch) for batch in path_batches]
+
+    # Get list of lists: [[meta1, meta2...], [meta31, meta32...]]
+    results_nested = ray.get(futures)
+
     ray.shutdown()
+
+    # Flatten the results into a single list
+    all_metadata_list = [item for sublist in results_nested for item in sublist]
 
     # 3. Assemble and Execute Bulk DB Update
     valid_updates = []
