@@ -18,3 +18,5 @@ COPY pixi.toml ./
 
 # Install dependencies using pixi
 RUN pixi install
+
+ENV PATH="/app/.pixi/envs/default/bin:$PATH"

@@ -14,7 +14,7 @@ data_root: "/app/data"
 
 scan:
   input_dir: "${data_root}/raw"
-  max_videos: 50
+  max_videos: 500
   video_extensions:
     - ".mp4"
     - ".avi"
@@ -22,8 +22,8 @@ scan:
     - ".mkv"
 
 filter:
-  min_width: 360
-  max_duration_sec: 10
+  min_width: 10
+  max_duration_sec: 20
   status_column: "is_quality_video"
 
 augment:

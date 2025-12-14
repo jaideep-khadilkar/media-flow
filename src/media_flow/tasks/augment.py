@@ -31,22 +31,30 @@ def setup_logger():
 
 
 def initialize_ray():
-    if ray.is_initialized():
-        ray.shutdown()
-    # Limit object store memory to prevent Ray from eating all RAM
     ray.init(
-        log_to_driver=True,
-        include_dashboard=False,
-        object_store_memory=2 * 1024 * 1024 * 1024,
+        address="ray://ray-head:10001",
+        ignore_reinit_error=True,
     )
+    print("Connected to existing Ray cluster.")
 
 
-# --- The Augmented Worker Function (unchanged core logic) ---
+# --- Refactored: Entire video processing moved to Ray Worker ---
+# MODIFIED: Combined IO and Processing into one remote task to eliminate data transfer overhead
 @ray.remote
-def augment_batch(batch_frames, augmentation_params):  # Accepts parameters now
+def process_video_task(
+    video_id: int,
+    video_path: str,
+    output_path: str,
+    augmentation_params: str,
+) -> Optional[Dict]:
+    """
+    Reads, augments, and writes video entirely on the worker node.
+    This avoids expensive serialization of video frames between driver and worker.
+    """
     # Define pipeline inside the worker to ensure serialization
     params = json.loads(augmentation_params)
 
+    # Initialize Augmentation Pipeline once per video (more efficient)
     augmenter = A.Compose(
         [
             A.CoarseDropout(**params.get("CoarseDropout", {"p": 0.8})),
@@ -60,47 +68,24 @@ def augment_batch(batch_frames, augmentation_params):  # Accepts parameters now
         p=1.0,
     )
 
-    results = []
-    for frame_data in batch_frames:
-        original = frame_data["image"]
-        image_rgb = cv2.cvtColor(original, cv2.COLOR_BGR2RGB)
-        augmented = augmenter(image=image_rgb)["image"]
-        image_bgr = cv2.cvtColor(augmented, cv2.COLOR_RGB2BGR)
-
-        results.append(
-            {"frame_id": frame_data["frame_id"], "augmented_image": image_bgr}
-        )
-    return results
-
-
-def process_video_streaming(
-    video_id: int,
-    video_path: str,
-    output_path: str,
-    augmentation_params: str,
-    batch_size=60,
-) -> Optional[Dict]:
-    """
-    Reads, augments, and writes video in chunks. Returns augmentation metadata.
-    """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        logger.error(f"Cannot open {video_path}")
+        # Using print/logging inside remote function logs to driver stderr by default
+        print(f"ERROR: Cannot open {video_path}")
         return None
 
     # Get Video Properties
     width = 480  # Matches your resize target
     height = 480  # Matches your resize target
     fps = cap.get(cv2.CAP_PROP_FPS)
-    # Total frames is often unreliable, use a counter instead
-    # total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
     # Initialize Writer
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    out = None
     try:
         out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
     except Exception as e:
-        logger.error(f"Failed to initialize video writer for {output_path}: {e}")
+        print(f"ERROR: Failed to initialize video writer for {output_path}: {e}")
         cap.release()
         return {
             "video_id": video_id,
@@ -108,51 +93,26 @@ def process_video_streaming(
             "error_message": f"Writer failed: {e}",
         }
 
-    logger.info(
-        f"Processing {os.path.basename(video_path)} in batches of {batch_size}..."
-    )
+    print(f"Processing {os.path.basename(video_path)} on worker...")
 
-    current_batch = []
-    frame_id = 0
-    futures = []
-
+    # Loop through frames directly on the worker
     while True:
         ret, frame = cap.read()
-
-        if ret:
-            current_batch.append({"frame_id": frame_id, "image": frame})
-            frame_id += 1
-
-        if len(current_batch) == batch_size or (not ret and current_batch):
-            # Send batch to Ray worker, passing augmentation parameters
-            future = augment_batch.remote(current_batch, augmentation_params)
-            futures.append(future)
-            current_batch = []
-
-            if len(futures) > 4:  # Limit active futures
-                ready_ids, futures = ray.wait(futures, num_returns=1)
-                result_batch = ray.get(ready_ids[0])
-
-                # Write immediately to disk
-                result_batch.sort(key=lambda x: x["frame_id"])
-                for res in result_batch:
-                    out.write(res["augmented_image"])
-
         if not ret:
             break
 
-    # Process remaining futures
-    for future in futures:
-        result_batch = ray.get(future)
-        result_batch.sort(key=lambda x: x["frame_id"])
-        for res in result_batch:
-            out.write(res["augmented_image"])
+        # Convert to RGB, Augment, Convert back to BGR
+        image_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        augmented = augmenter(image=image_rgb)["image"]
+        image_bgr = cv2.cvtColor(augmented, cv2.COLOR_RGB2BGR)
+
+        out.write(image_bgr)
 
     cap.release()
     out.release()
-    logger.success(f"Finished augmentation: {output_path}")
+    print(f"Finished augmentation: {output_path}")
 
-    # Return success record to be written to DB
+    # Return success record to be written to DB by the driver
     return {
         "video_id": video_id,
         "augmented_path": output_path,
@@ -260,19 +220,29 @@ def augment_pipeline(cfg: DictConfig):
     os.makedirs(output_dir, exist_ok=True)
 
     logger.info(f"Starting augmentation on {len(videos_to_augment)} videos.")
+
+    # MODIFIED: Batch submission of tasks to Ray
+    futures = []
     for video_id, video_path, filename in videos_to_augment:
         basename = os.path.splitext(filename)[0]
         output_path = os.path.join(output_dir, f"{basename}_aug.mp4")
 
-        # Process video and get result metadata
-        result_record = process_video_streaming(
+        # Submit task to Ray (Non-blocking)
+        # This allows multiple videos to be processed in parallel on different workers
+        future = process_video_task.remote(
             video_id=video_id,
             video_path=video_path,
             output_path=output_path,
             augmentation_params=augmentation_settings,
         )
+        futures.append(future)
 
-        # Record the result in the database
+    # Wait for all tasks to complete and retrieve results
+    logger.info("Waiting for Ray tasks to complete...")
+    results = ray.get(futures)
+
+    # Record the result in the database
+    for result_record in results:
         if result_record:
             insert_augmentation_record(result_record)
 
