@@ -18,7 +18,8 @@ CREATE TABLE IF NOT EXISTS video_metadata (
     codec_name VARCHAR(64),
     color_space VARCHAR(64),
     is_quality_video BOOLEAN DEFAULT FALSE, -- Used by filter.py
-    scan_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    scan_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    transcription TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_original_path ON video_metadata (original_path);
 """
