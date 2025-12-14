@@ -8,7 +8,7 @@ from docker.types import Mount
 REPO_PATH_ON_HOST = "C:/Users/iamja/Documents/GitHub/media-flow"
 REPO_PATH_IN_CONTAINER = "/app"
 DATA_PATH = "/app/data"
-WORKER_IMAGE = "media-flow:1.3"
+WORKER_IMAGE = "media-flow:1.4"
 POSTGRES_CONN_ID = "postgres_default"
 
 default_args = {

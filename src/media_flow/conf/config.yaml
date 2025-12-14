@@ -23,7 +23,7 @@ scan:
 
 filter:
   min_width: 10
-  max_duration_sec: 20
+  max_duration_sec: 11
   status_column: "is_quality_video"
 
 augment:
