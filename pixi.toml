@@ -30,6 +30,7 @@ opencv-python = ">=4.11.0.86, <5"
 apache-airflow = { version = ">=2.9.0,<3.0", extras = ["celery"] }
 apache-airflow-providers-cncf-kubernetes = "*"
 apache-airflow-providers-docker = "*"
+mediapipe = ">=0.10.14, <0.11"
 
 [feature.dev.pypi-dependencies]
 black = "*"
