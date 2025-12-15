@@ -1,6 +1,6 @@
+import json
 import os
 import sys
-import psutil
 from typing import Dict, Optional
 
 import hydra
@@ -30,21 +30,19 @@ def initialize_ray():
     ray.init(
         address="ray://ray-head:10001",
         ignore_reinit_error=True,
-        # Optional: Whisper is RAM hungry. Adjust object_store_memory if needed.
     )
     print("Connected to existing Ray cluster.")
 
 
 # --- Ray Remote Task: Transcribe Video ---
-@ray.remote
+@ray.remote(max_retries=2, retry_exceptions=True)
 def transcribe_video_task(
-    video_id: int, video_path: str, model_name: str = "base"
+    video_id: int, video_path: str, output_json_path: str, model_name: str = "base"
 ) -> Optional[Dict]:
     """
-    Loads Whisper model on the worker and transcribes the video file.
+    Loads Whisper model on the worker and transcribes the video file to JSON.
     """
     try:
-        # Check if file exists
         if not os.path.exists(video_path):
             return {
                 "video_id": video_id,
@@ -52,22 +50,30 @@ def transcribe_video_task(
                 "error_message": f"File not found: {video_path}",
             }
 
-        # Load Model (this happens on the worker node)
-        # Note: Models are cached at ~/.cache/whisper.
-        # Since we use a persistent volume for /app/data, you might want to map cache there too if re-downloading is an issue.
         print(f"Worker {os.getpid()} loading Whisper model: {model_name}...")
         model = whisper.load_model(model_name)
 
         print(f"Transcribing {os.path.basename(video_path)}...")
 
-        # Transcribe
-        # fp16=False is safer for CPU inference if GPUs are not available
+        # Transcribe (fp16=False for CPU compatibility)
         result = model.transcribe(video_path, fp16=False)
         transcript_text = result["text"].strip()
 
+        # Prepare Output Data
+        data = {
+            "video_id": video_id,
+            "original_path": video_path,
+            "model_used": model_name,
+            "transcription": transcript_text,
+        }
+
+        # Write to JSON file
+        with open(output_json_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
+
         return {
             "video_id": video_id,
-            "transcription": transcript_text,
+            "output_path": output_json_path,
             "status": "SUCCESS",
         }
 
@@ -77,51 +83,22 @@ def transcribe_video_task(
         return {"video_id": video_id, "status": "ERROR", "error_message": error_msg}
 
 
-def update_transcription_record(record: Dict):
-    """Updates the video_metadata table with the transcription."""
-    conn = None
-    try:
-        conn = psycopg2.connect(
-            host=DB_HOST, database=DB_NAME, user=DB_USER, password=DB_PASSWORD
-        )
-        cursor = conn.cursor()
-
-        if record["status"] == "SUCCESS":
-            update_stmt = """
-                UPDATE video_metadata 
-                SET transcription = %s 
-                WHERE video_id = %s;
-            """
-            cursor.execute(update_stmt, (record["transcription"], record["video_id"]))
-            conn.commit()
-            logger.info(f"Transcription saved for video ID {record['video_id']}")
-        else:
-            logger.warning(
-                f"Skipping DB update for video ID {record['video_id']}: {record.get('error_message')}"
-            )
-
-    except psycopg2.Error as e:
-        logger.error(f"DB Error updating transcription: {e}")
-        if conn:
-            conn.rollback()
-    finally:
-        if conn:
-            conn.close()
-
-
 def transcribe_pipeline(cfg: DictConfig):
     setup_logger()
+
+    # Define Output Directory
+    # Defaults to /app/data/transcriptions if not set in config
+    base_output_dir = cfg.get("transcribe", {}).get(
+        "output_dir", "/app/data/transcriptions"
+    )
+    os.makedirs(base_output_dir, exist_ok=True)
 
     if not all([DB_HOST, DB_NAME, DB_USER, DB_PASSWORD]):
         logger.error("Missing required DB environment variables.")
         sys.exit(1)
 
-    # 1. Fetch videos that need transcription
     conn = None
     videos_to_process = []
-
-    # Configurable model size (base, small, medium, etc.)
-    # You can add this to your Hydra config: transcribe: { model: "base" }
     whisper_model = cfg.get("transcribe", {}).get("model", "base")
 
     try:
@@ -130,17 +107,26 @@ def transcribe_pipeline(cfg: DictConfig):
         )
         cursor = conn.cursor()
 
-        # Select videos that exist (have path) but have NO transcription yet
+        # 1. Fetch ALL quality videos
         query = """
-            SELECT video_id, original_path 
+            SELECT video_id, original_path, filename
             FROM video_metadata 
-            WHERE original_path IS NOT NULL
-              AND video_metadata.is_quality_video = TRUE
-              AND transcription IS NULL;
+            WHERE original_path IS NOT NULL 
+              AND is_quality_video = TRUE;
         """
         cursor.execute(query)
-        videos_to_process = cursor.fetchall()
+        all_videos = cursor.fetchall()
         conn.close()
+
+        # 2. Filter: Only process if the JSON file DOES NOT exist
+        for video_id, video_path, filename in all_videos:
+            basename = os.path.splitext(filename)[0]
+            json_filename = f"{basename}.json"
+            output_path = os.path.join(base_output_dir, json_filename)
+
+            if not os.path.exists(output_path):
+                # Add to processing list if file doesn't exist
+                videos_to_process.append((video_id, video_path, output_path))
 
     except psycopg2.Error as e:
         logger.error(f"DB Error fetching videos: {e}")
@@ -149,33 +135,43 @@ def transcribe_pipeline(cfg: DictConfig):
         sys.exit(1)
 
     if not videos_to_process:
-        logger.info("No videos require transcription. Exiting.")
+        logger.info("No new videos require transcription (all JSON files exist).")
         return
 
     initialize_ray()
 
-    logger.info(
-        f"Starting transcription on {len(videos_to_process)} videos using model '{whisper_model}'."
-    )
+    logger.info(f"Starting transcription on {len(videos_to_process)} videos...")
 
-    # 2. Submit tasks to Ray
+    # 3. Submit tasks to Ray
     futures = []
-    for video_id, video_path in videos_to_process:
-        # Submit remote task
+    for video_id, video_path, output_path in videos_to_process:
         future = transcribe_video_task.remote(
-            video_id=video_id, video_path=video_path, model_name=whisper_model
+            video_id=video_id,
+            video_path=video_path,
+            output_json_path=output_path,
+            model_name=whisper_model,
         )
         futures.append(future)
 
-    # 3. Collect results
-    logger.info("Waiting for Ray transcription tasks...")
-    results = ray.get(futures)
+    # 4. Wait for completion
+    # We use a loop here to log individual successes/failures
+    completed_futures, _ = ray.wait(futures, num_returns=len(futures), timeout=None)
 
-    # 4. Update Database
-    for res in results:
-        if res:
-            update_transcription_record(res)
+    success_count = 0
+    for future in completed_futures:
+        try:
+            res = ray.get(future)
+            if res and res["status"] == "SUCCESS":
+                success_count += 1
+                logger.info(f"Created transcription: {res['output_path']}")
+            else:
+                logger.error(f"Task failed: {res.get('error_message')}")
+        except Exception as e:
+            logger.error(f"Ray task exception: {e}")
 
+    logger.success(
+        f"Transcription complete. {success_count}/{len(videos_to_process)} processed successfully."
+    )
     ray.shutdown()
 
 

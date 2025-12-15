@@ -229,8 +229,10 @@ def save_landmark_record(record: Dict):
 def landmarks_pipeline(cfg: DictConfig):
     setup_logger()
 
-    output_dir = os.path.join(cfg.augment.output_dir, "landmarks")
-    os.makedirs(output_dir, exist_ok=True)
+    videos_output_dir = cfg.landmarks.video_output_dir
+    json_output_dir = cfg.landmarks.json_output_dir
+    os.makedirs(videos_output_dir, exist_ok=True)
+    os.makedirs(json_output_dir, exist_ok=True)
 
     if not all([DB_HOST, DB_NAME, DB_USER, DB_PASSWORD]):
         logger.error("Missing DB credentials.")
@@ -282,8 +284,8 @@ def landmarks_pipeline(cfg: DictConfig):
 
     for video_id, video_path, filename in videos_to_process:
         basename = os.path.splitext(filename)[0]
-        vid_out = os.path.join(output_dir, f"{basename}_overlay.mp4")
-        json_out = os.path.join(output_dir, f"{basename}_landmarks.json")
+        vid_out = os.path.join(videos_output_dir, f"{basename}.mp4")
+        json_out = os.path.join(json_output_dir, f"{basename}.json")
 
         future = detect_landmarks_task.remote(
             video_id=video_id,

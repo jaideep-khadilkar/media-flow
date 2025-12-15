@@ -225,7 +225,7 @@ def augment_pipeline(cfg: DictConfig):
     futures = []
     for video_id, video_path, filename in videos_to_augment:
         basename = os.path.splitext(filename)[0]
-        output_path = os.path.join(output_dir, f"{basename}_aug.mp4")
+        output_path = os.path.join(output_dir, f"{basename}.mp4")
 
         # Submit task to Ray (Non-blocking)
         # This allows multiple videos to be processed in parallel on different workers
