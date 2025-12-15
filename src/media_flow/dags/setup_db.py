@@ -45,6 +45,38 @@ CREATE TABLE IF NOT EXISTS augmented_videos (
 );
 """
 
+SQL_CREATE_VIDEO_LANDMARKS = """
+CREATE TABLE IF NOT EXISTS video_landmarks (
+    id SERIAL PRIMARY KEY,
+    video_id INTEGER NOT NULL UNIQUE,  -- UNIQUE ensures 1:1 relationship with metadata
+    overlay_path TEXT,                 -- Path to the visual verification video
+    landmarks_json_path TEXT,          -- Path to the heavy JSON data file on disk
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    CONSTRAINT fk_video_landmarks
+      FOREIGN KEY(video_id) 
+      REFERENCES video_metadata(video_id)
+      ON DELETE CASCADE
+);
+"""
+
+SQL_CREATE_PROCESSING_FAILURES = """
+CREATE TABLE IF NOT EXISTS processing_failures (
+    video_id INTEGER,
+    task_name TEXT,
+    error_message TEXT,
+    attempt_count INTEGER DEFAULT 1,
+    last_attempt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    PRIMARY KEY (video_id, task_name),
+    
+    CONSTRAINT fk_failure_video
+      FOREIGN KEY(video_id) 
+      REFERENCES video_metadata(video_id)
+      ON DELETE CASCADE
+);
+"""
+
 with DAG(
     dag_id="setup_db",
     start_date=pendulum.datetime(2025, 1, 1, tz="UTC"),
@@ -65,4 +97,19 @@ with DAG(
         sql=SQL_CREATE_AUGMENTED_VIDEOS,
     )
 
+    create_video_landmarks_table = PostgresOperator(
+        task_id="create_video_landmarks_table",
+        postgres_conn_id=POSTGRES_CONN_ID,
+        sql=SQL_CREATE_VIDEO_LANDMARKS,
+    )
+
+    create_failures_table = PostgresOperator(
+        task_id="create_failures_table",
+        postgres_conn_id=POSTGRES_CONN_ID,
+        sql=SQL_CREATE_PROCESSING_FAILURES,
+    )
+
+    # pylint: disable=pointless-statement
     create_video_metadata_table >> create_augmented_videos_table
+    create_video_metadata_table >> create_video_landmarks_table
+    create_video_metadata_table >> create_failures_table

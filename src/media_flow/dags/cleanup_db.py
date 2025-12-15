@@ -26,4 +26,14 @@ with DAG(
         sql="DROP TABLE IF EXISTS augmented_videos CASCADE;",
     )
 
-    delete_video_metadata_table >> delete_augmented_videos_table
+    delete_video_landmarks_table = PostgresOperator(
+        task_id="delete_video_landmarks_table",
+        postgres_conn_id=POSTGRES_CONN_ID,
+        sql="DROP TABLE IF EXISTS video_landmarks CASCADE;",
+    )
+
+    delete_processing_failures_table = PostgresOperator(
+        task_id="delete_processing_failures_table",
+        postgres_conn_id=POSTGRES_CONN_ID,
+        sql="DROP TABLE IF EXISTS processing_failures CASCADE;",
+    )
