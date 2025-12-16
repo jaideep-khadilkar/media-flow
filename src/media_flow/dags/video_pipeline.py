@@ -8,7 +8,7 @@ from docker.types import Mount
 REPO_PATH_ON_HOST = "C:/Users/iamja/Documents/GitHub/media-flow"
 REPO_PATH_IN_CONTAINER = "/app"
 DATA_PATH = "/app/data"
-WORKER_IMAGE = "media-flow:1.4"
+WORKER_IMAGE = "media-flow:1.5"
 POSTGRES_CONN_ID = "postgres_default"
 
 default_args = {
@@ -110,8 +110,23 @@ with DAG(
         network_mode="media-flow_default",
     )
 
+    # --- 6. Landmarks Task (New) ---
+    detect_landmarks = DockerOperator(
+        task_id="detect_landmarks",
+        image=WORKER_IMAGE,
+        command="pixi run python src/media_flow/tasks/landmarks.py",
+        mounts=SHARED_MOUNTS,
+        mount_tmp_dir=False,
+        environment=DB_ENV_VARS,
+        working_dir=REPO_PATH_IN_CONTAINER,
+        auto_remove=True,
+        docker_url="unix://var/run/docker.sock",
+        network_mode="media-flow_default",
+    )
+
     # --- Final Flow ---
     # pylint: disable=pointless-statement
     scan_videos >> extract_metadata >> filter_videos
     filter_videos >> augment_videos
     filter_videos >> transcribe_videos
+    filter_videos >> detect_landmarks

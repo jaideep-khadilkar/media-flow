@@ -27,4 +27,11 @@ filter:
   status_column: "is_quality_video"
 
 augment:
-  output_dir: "${data_root}/processed"
+  output_dir: "${data_root}/augmented"
+
+transcribe:
+  output_dir: "${data_root}/transcriptions"
+
+landmarks:
+  video_output_dir: "${data_root}/landmarks_videos"
+  json_output_dir: "${data_root}/landmarks_json"
