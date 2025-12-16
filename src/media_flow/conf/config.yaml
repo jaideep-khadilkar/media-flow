@@ -12,14 +12,14 @@ defaults:
 
 data_root: "/app/data"
 
-scan:
+ingest:
   input_dir: "${data_root}/raw"
-  max_videos: 500
   video_extensions:
     - ".mp4"
     - ".avi"
     - ".mov"
     - ".mkv"
+  metadata_extraction_batch_size: 30
 
 filter:
   min_width: 10

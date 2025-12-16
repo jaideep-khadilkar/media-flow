@@ -1,17 +1,21 @@
+# pylint: disable=missing-module-docstring, missing-function-docstring, missing-class-docstring
 import json
 import os
 import sys
-from typing import Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import albumentations as A
 
 # pylint: disable=no-member
 import cv2
 import hydra
+import numpy as np
 import psycopg2
 import ray
 from loguru import logger
 from omegaconf import DictConfig
+
+from media_flow.utils.fault_tolerance import RAY_TASK_CONFIG, process_ray_results
 
 # Database Connection Details (pulled from environment)
 DB_HOST = os.environ.get("DB_HOST")
@@ -38,24 +42,12 @@ def initialize_ray():
     print("Connected to existing Ray cluster.")
 
 
-# --- Refactored: Entire video processing moved to Ray Worker ---
-# MODIFIED: Combined IO and Processing into one remote task to eliminate data transfer overhead
-@ray.remote
-def process_video_task(
-    video_id: int,
-    video_path: str,
-    output_path: str,
-    augmentation_params: str,
-) -> Optional[Dict]:
-    """
-    Reads, augments, and writes video entirely on the worker node.
-    This avoids expensive serialization of video frames between driver and worker.
-    """
-    # Define pipeline inside the worker to ensure serialization
-    params = json.loads(augmentation_params)
+def parse_augmentation_params(augmentation_params: str) -> Dict[str, Any]:
+    return json.loads(augmentation_params)
 
-    # Initialize Augmentation Pipeline once per video (more efficient)
-    augmenter = A.Compose(
+
+def build_augmenter(params: Dict[str, Any]) -> A.Compose:
+    return A.Compose(
         [
             A.CoarseDropout(**params.get("CoarseDropout", {"p": 0.8})),
             A.Rotate(**params.get("Rotate", {"limit": 10, "p": 0.7})),
@@ -68,6 +60,131 @@ def process_video_task(
         p=1.0,
     )
 
+
+def create_video_writer(
+    output_path: str, fps: float, width: int, height: int
+) -> Tuple[Optional[cv2.VideoWriter], Optional[Exception]]:
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    try:
+        return cv2.VideoWriter(output_path, fourcc, fps, (width, height)), None
+    except Exception as e:
+        return None, e
+
+
+def augment_frame(augmenter: A.Compose, frame_bgr: np.ndarray) -> np.ndarray:
+    image_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+    augmented = augmenter(image=image_rgb)["image"]
+    return cv2.cvtColor(augmented, cv2.COLOR_RGB2BGR)
+
+
+def build_success_record(
+    video_id: int, output_path: str, augmentation_params: str
+) -> Dict[str, Any]:
+    return {
+        "video_id": video_id,
+        "augmented_path": output_path,
+        "augmentation_type": "standard_dropout",
+        "parameters_used": augmentation_params,
+        "status": "READY",
+    }
+
+
+def ensure_db_credentials() -> None:
+    if not all([DB_HOST, DB_NAME, DB_USER, DB_PASSWORD]):
+        logger.error("Missing required DB environment variables.")
+        sys.exit(1)
+
+
+def get_augmentation_settings() -> str:
+    return json.dumps(
+        {
+            "CoarseDropout": {
+                "max_holes": 1,
+                "max_height": 64,
+                "max_width": 64,
+                "p": 0.8,
+            },
+            "Rotate": {"limit": 10, "p": 0.7},
+            "RandomBrightnessContrast": {"p": 0.5},
+            "GaussNoise": {"p": 0.5},
+        }
+    )
+
+
+def fetch_videos_to_augment() -> List[Tuple[int, str, str]]:
+    conn = None
+    try:
+        conn = psycopg2.connect(
+            host=DB_HOST, database=DB_NAME, user=DB_USER, password=DB_PASSWORD
+        )
+        cursor = conn.cursor()
+        query = """
+            SELECT vm.video_id, vm.original_path, vm.filename
+            FROM video_metadata vm
+            WHERE vm.is_quality_video = TRUE
+              AND NOT EXISTS (
+                  SELECT 1 FROM augmented_videos av 
+                  WHERE av.video_id = vm.video_id AND av.augmentation_type = 'standard_dropout'
+              );
+        """
+        cursor.execute(query)
+        rows = cursor.fetchall()
+        conn.close()
+        return rows
+    except psycopg2.Error as e:
+        logger.error(f"DB Error fetching videos to augment: {e}")
+        if conn:
+            conn.close()
+        sys.exit(1)
+
+
+def prepare_output_path(output_dir: str, filename: str) -> str:
+    basename = os.path.splitext(filename)[0]
+    return os.path.join(output_dir, f"{basename}.mp4")
+
+
+def submit_augment_tasks(
+    videos: List[Tuple[int, str, str]],
+    output_dir: str,
+    augmentation_settings: str,
+) -> Tuple[List[Any], Dict[Any, int]]:
+    futures: List[Any] = []
+    future_to_id: Dict[Any, int] = {}
+    for video_id, video_path, filename in videos:
+        output_path = prepare_output_path(output_dir, filename)
+        future = process_video_task.remote(
+            video_id=video_id,
+            video_path=video_path,
+            output_path=output_path,
+            augmentation_params=augmentation_settings,
+        )
+        futures.append(future)
+        future_to_id[future] = video_id
+    return futures, future_to_id
+
+
+def handle_results(futures: List[Any], future_to_id: Dict[Any, int]) -> None:
+    for result_record in process_ray_results(futures, future_to_id, "augment"):
+        insert_augmentation_record(result_record)
+
+
+# --- Refactored: Entire video processing moved to Ray Worker ---
+# MODIFIED: Combined IO and Processing into one remote task to eliminate data transfer overhead
+@ray.remote(**RAY_TASK_CONFIG)
+def process_video_task(
+    video_id: int,
+    video_path: str,
+    output_path: str,
+    augmentation_params: str,
+) -> Optional[Dict]:
+    """
+    Reads, augments, and writes video entirely on the worker node.
+    This avoids expensive serialization of video frames between driver and worker.
+    """
+    # Define pipeline inside the worker to ensure serialization
+    params = parse_augmentation_params(augmentation_params)
+    augmenter = build_augmenter(params)
+
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         # Using print/logging inside remote function logs to driver stderr by default
@@ -79,18 +196,14 @@ def process_video_task(
     height = 480  # Matches your resize target
     fps = cap.get(cv2.CAP_PROP_FPS)
 
-    # Initialize Writer
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    out = None
-    try:
-        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-    except Exception as e:
-        print(f"ERROR: Failed to initialize video writer for {output_path}: {e}")
+    writer, err = create_video_writer(output_path, fps, width, height)
+    if err or writer is None:
+        print(f"ERROR: Failed to initialize video writer for {output_path}: {err}")
         cap.release()
         return {
             "video_id": video_id,
             "status": "ERROR",
-            "error_message": f"Writer failed: {e}",
+            "error_message": f"Writer failed: {err}",
         }
 
     print(f"Processing {os.path.basename(video_path)} on worker...")
@@ -101,25 +214,15 @@ def process_video_task(
         if not ret:
             break
 
-        # Convert to RGB, Augment, Convert back to BGR
-        image_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        augmented = augmenter(image=image_rgb)["image"]
-        image_bgr = cv2.cvtColor(augmented, cv2.COLOR_RGB2BGR)
-
-        out.write(image_bgr)
+        image_bgr = augment_frame(augmenter, frame)
+        writer.write(image_bgr)
 
     cap.release()
-    out.release()
+    writer.release()
     print(f"Finished augmentation: {output_path}")
 
     # Return success record to be written to DB by the driver
-    return {
-        "video_id": video_id,
-        "augmented_path": output_path,
-        "augmentation_type": "standard_dropout",
-        "parameters_used": augmentation_params,
-        "status": "READY",
-    }
+    return build_success_record(video_id, output_path, augmentation_params)
 
 
 def insert_augmentation_record(record: Dict):
@@ -163,88 +266,23 @@ def augment_pipeline(cfg: DictConfig):
     output_dir = cfg.augment.output_dir
     setup_logger()
 
-    if not all([DB_HOST, DB_NAME, DB_USER, DB_PASSWORD]):
-        logger.error("Missing required DB environment variables.")
-        sys.exit(1)
+    ensure_db_credentials()
 
-    # 1. Query DB for videos that passed filtering and haven't been augmented
-    conn = None
-    videos_to_augment = []
-
-    # Define augmentation parameters for this run (passed as JSON string)
-    augmentation_settings = json.dumps(
-        {
-            "CoarseDropout": {
-                "max_holes": 1,
-                "max_height": 64,
-                "max_width": 64,
-                "p": 0.8,
-            },
-            "Rotate": {"limit": 10, "p": 0.7},
-            "RandomBrightnessContrast": {"p": 0.5},
-            "GaussNoise": {"p": 0.5},
-        }
-    )
-
-    try:
-        conn = psycopg2.connect(
-            host=DB_HOST, database=DB_NAME, user=DB_USER, password=DB_PASSWORD
-        )
-        cursor = conn.cursor()
-
-        # Select videos marked as good quality and not yet augmented
-        query = """
-            SELECT vm.video_id, vm.original_path, vm.filename
-            FROM video_metadata vm
-            WHERE vm.is_quality_video = TRUE
-              AND NOT EXISTS (
-                  SELECT 1 FROM augmented_videos av 
-                  WHERE av.video_id = vm.video_id AND av.augmentation_type = 'standard_dropout'
-              );
-        """
-        cursor.execute(query)
-        videos_to_augment = cursor.fetchall()
-        conn.close()
-
-    except psycopg2.Error as e:
-        logger.error(f"DB Error fetching videos to augment: {e}")
-        if conn:
-            conn.close()
-        sys.exit(1)
-
+    videos_to_augment = fetch_videos_to_augment()
     if not videos_to_augment:
         logger.info("No new videos require augmentation. Exiting.")
         return
 
     initialize_ray()
     os.makedirs(output_dir, exist_ok=True)
+    augmentation_settings = get_augmentation_settings()
 
     logger.info(f"Starting augmentation on {len(videos_to_augment)} videos.")
 
-    # MODIFIED: Batch submission of tasks to Ray
-    futures = []
-    for video_id, video_path, filename in videos_to_augment:
-        basename = os.path.splitext(filename)[0]
-        output_path = os.path.join(output_dir, f"{basename}.mp4")
-
-        # Submit task to Ray (Non-blocking)
-        # This allows multiple videos to be processed in parallel on different workers
-        future = process_video_task.remote(
-            video_id=video_id,
-            video_path=video_path,
-            output_path=output_path,
-            augmentation_params=augmentation_settings,
-        )
-        futures.append(future)
-
-    # Wait for all tasks to complete and retrieve results
-    logger.info("Waiting for Ray tasks to complete...")
-    results = ray.get(futures)
-
-    # Record the result in the database
-    for result_record in results:
-        if result_record:
-            insert_augmentation_record(result_record)
+    futures, future_to_id = submit_augment_tasks(
+        videos_to_augment, output_dir, augmentation_settings
+    )
+    handle_results(futures, future_to_id)
 
     ray.shutdown()
 
@@ -255,4 +293,5 @@ def main(cfg: DictConfig):
 
 
 if __name__ == "__main__":
+    # pylint: disable=no-value-for-parameter
     main()
