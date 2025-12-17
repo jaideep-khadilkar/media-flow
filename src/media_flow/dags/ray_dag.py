@@ -30,18 +30,18 @@ SHARED_MOUNTS = [
 ]
 
 with DAG(
-    dag_id="ray_test_dag",
+    dag_id="ray_dag",
     start_date=datetime(2025, 11, 1),
     schedule=None,  # Run manually or via API only
     catchup=False,
     default_args=default_args,
 ) as dag:
 
-    ray_heavy_test = DockerOperator(
-        task_id="ray_heavy_test",
+    ray_task = DockerOperator(
+        task_id="ray_task",
         image=WORKER_IMAGE,
         # Output directory is needed to save the augmented files
-        command="pixi run python src/media_flow/tasks/ray_heavy_test.py",
+        command="pixi run python src/media_flow/tasks/ray_task.py",
         mounts=SHARED_MOUNTS,
         mount_tmp_dir=False,
         environment=DB_ENV_VARS,
