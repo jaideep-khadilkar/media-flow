@@ -20,3 +20,5 @@ COPY pixi.toml ./
 RUN pixi install
 
 ENV PATH="/app/.pixi/envs/default/bin:$PATH"
+
+ENV PYTHONPATH="/app/src"

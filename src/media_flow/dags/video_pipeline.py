@@ -8,7 +8,7 @@ from docker.types import Mount
 REPO_PATH_ON_HOST = "C:/Users/iamja/Documents/GitHub/media-flow"
 REPO_PATH_IN_CONTAINER = "/app"
 DATA_PATH = "/app/data"
-WORKER_IMAGE = "media-flow:1.5"
+WORKER_IMAGE = "media-flow:1.6"
 POSTGRES_CONN_ID = "postgres_default"
 
 default_args = {
@@ -37,11 +37,11 @@ with DAG(
     default_args=default_args,
 ) as dag:
 
-    # --- 1. Scan Task (Inserts paths into video_metadata, uses max_videos for dev limit) ---
-    scan_videos = DockerOperator(
-        task_id="scan_videos",
+    # --- Ingest Task (Inserts paths into video_metadata, uses max_videos for dev limit) ---
+    ingest_videos = DockerOperator(
+        task_id="ingest_videos",
         image=WORKER_IMAGE,
-        command="pixi run python src/media_flow/tasks/scan.py",
+        command="pixi run python src/media_flow/tasks/ingest.py",
         mounts=SHARED_MOUNTS,
         mount_tmp_dir=False,
         environment=DB_ENV_VARS,
@@ -51,22 +51,7 @@ with DAG(
         network_mode="media-flow_default",
     )
 
-    # --- 2. Extract Metadata Task (Reads pending, Updates video_metadata) ---
-    extract_metadata = DockerOperator(
-        task_id="extract_metadata",
-        image=WORKER_IMAGE,
-        # No arguments needed; reads all pending work from the DB.
-        command="pixi run python src/media_flow/tasks/extract_metadata.py",
-        mounts=SHARED_MOUNTS,
-        mount_tmp_dir=False,
-        environment=DB_ENV_VARS,
-        working_dir=REPO_PATH_IN_CONTAINER,
-        auto_remove=True,
-        docker_url="unix://var/run/docker.sock",
-        network_mode="media-flow_default",
-    )
-
-    # --- 3. Filter Task (Reads metadata, Marks is_quality_video in DB) ---
+    # --- Filter Task (Reads metadata, Marks is_quality_video in DB) ---
     filter_videos = DockerOperator(
         task_id="filter_videos",
         image=WORKER_IMAGE,
@@ -81,7 +66,7 @@ with DAG(
         network_mode="media-flow_default",
     )
 
-    # --- 4. Augment Task (Reads filtered videos, Writes file to disk and record to augmented_videos DB table) ---
+    # --- Augment Task (Reads filtered videos, Writes file to disk and record to augmented_videos DB table) ---
     augment_videos = DockerOperator(
         task_id="augment_videos",
         image=WORKER_IMAGE,
@@ -96,7 +81,7 @@ with DAG(
         network_mode="media-flow_default",
     )
 
-    # --- 5. Transcribe Task (New) ---
+    # --- Transcribe Task (New) ---
     transcribe_videos = DockerOperator(
         task_id="transcribe",
         image=WORKER_IMAGE,
@@ -110,7 +95,7 @@ with DAG(
         network_mode="media-flow_default",
     )
 
-    # --- 6. Landmarks Task (New) ---
+    # --- Landmarks Task (New) ---
     detect_landmarks = DockerOperator(
         task_id="detect_landmarks",
         image=WORKER_IMAGE,
@@ -126,7 +111,7 @@ with DAG(
 
     # --- Final Flow ---
     # pylint: disable=pointless-statement
-    scan_videos >> extract_metadata >> filter_videos
+    ingest_videos >> filter_videos
     filter_videos >> augment_videos
     filter_videos >> transcribe_videos
     filter_videos >> detect_landmarks

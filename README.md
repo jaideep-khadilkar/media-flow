@@ -13,7 +13,7 @@ A simple video processing pipeline using Airflow, Ray, FFmpeg, and PostgreSQL. I
 
 - Quick Start
   1. Build worker image (Pixi-based):
-     - From /app: `docker build -t media-flow:1.5 .`
+     - From /app: `docker build -t media-flow:1.6 .`
   2. Start Airflow stack:
      - From /app: `docker compose up -d`
      - First boot runs migrations and creates default user (airflow/airflow).
