@@ -28,6 +28,23 @@ filter:
 
 augment:
   output_dir: "${data_root}/augmented"
+  settings:
+    CoarseDropout:
+      max_holes: 8
+      max_height: 64
+      max_width: 64
+      p: 0.8
+    Rotate:
+      limit: 90
+      p: 0.7
+    RandomBrightnessContrast:
+      # brightness_limit: 0.2
+      # contrast_limit: 0.2
+      p: 0.5
+    GaussNoise:
+      # var_limit: (10.0, 50.0)
+      p: 0.5
+
 
 transcribe:
   output_dir: "${data_root}/transcriptions"

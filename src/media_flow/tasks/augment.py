@@ -2,6 +2,7 @@
 import json
 import os
 import sys
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import albumentations as A
@@ -13,7 +14,7 @@ import numpy as np
 import psycopg2
 import ray
 from loguru import logger
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from media_flow.utils.fault_tolerance import RAY_TASK_CONFIG, process_ray_results
 
@@ -25,7 +26,6 @@ DB_PASSWORD = os.environ.get("DB_PASSWORD")
 
 
 def setup_logger():
-    # ... (log setup remains the same)
     logger.remove()
     logger.add(
         sys.stderr,
@@ -40,10 +40,6 @@ def initialize_ray():
         ignore_reinit_error=True,
     )
     print("Connected to existing Ray cluster.")
-
-
-def parse_augmentation_params(augmentation_params: str) -> Dict[str, Any]:
-    return json.loads(augmentation_params)
 
 
 def build_augmenter(params: Dict[str, Any]) -> A.Compose:
@@ -62,11 +58,12 @@ def build_augmenter(params: Dict[str, Any]) -> A.Compose:
 
 
 def create_video_writer(
-    output_path: str, fps: float, width: int, height: int
+    output_path: Path, fps: float, width: int, height: int
 ) -> Tuple[Optional[cv2.VideoWriter], Optional[Exception]]:
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     try:
-        return cv2.VideoWriter(output_path, fourcc, fps, (width, height)), None
+        # OpenCV requires the path as a string
+        return cv2.VideoWriter(str(output_path), fourcc, fps, (width, height)), None
     except Exception as e:
         return None, e
 
@@ -78,11 +75,11 @@ def augment_frame(augmenter: A.Compose, frame_bgr: np.ndarray) -> np.ndarray:
 
 
 def build_success_record(
-    video_id: int, output_path: str, augmentation_params: str
+    video_id: int, output_path: Path, augmentation_params: str
 ) -> Dict[str, Any]:
     return {
         "video_id": video_id,
-        "augmented_path": output_path,
+        "augmented_path": str(output_path),
         "augmentation_type": "standard_dropout",
         "parameters_used": augmentation_params,
         "status": "READY",
@@ -93,22 +90,6 @@ def ensure_db_credentials() -> None:
     if not all([DB_HOST, DB_NAME, DB_USER, DB_PASSWORD]):
         logger.error("Missing required DB environment variables.")
         sys.exit(1)
-
-
-def get_augmentation_settings() -> str:
-    return json.dumps(
-        {
-            "CoarseDropout": {
-                "max_holes": 1,
-                "max_height": 64,
-                "max_width": 64,
-                "p": 0.8,
-            },
-            "Rotate": {"limit": 10, "p": 0.7},
-            "RandomBrightnessContrast": {"p": 0.5},
-            "GaussNoise": {"p": 0.5},
-        }
-    )
 
 
 def fetch_videos_to_augment() -> List[Tuple[int, str, str]]:
@@ -138,24 +119,26 @@ def fetch_videos_to_augment() -> List[Tuple[int, str, str]]:
         sys.exit(1)
 
 
-def prepare_output_path(output_dir: str, filename: str) -> str:
+def prepare_output_path(output_dir: Path, filename: str) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
     basename = os.path.splitext(filename)[0]
-    return os.path.join(output_dir, f"{basename}.mp4")
+    return output_dir / f"{basename}.mp4"
 
 
 def submit_augment_tasks(
     videos: List[Tuple[int, str, str]],
-    output_dir: str,
+    output_dir: Path,
     augmentation_settings: str,
 ) -> Tuple[List[Any], Dict[Any, int]]:
     futures: List[Any] = []
     future_to_id: Dict[Any, int] = {}
     for video_id, video_path, filename in videos:
         output_path = prepare_output_path(output_dir, filename)
+        # Passing paths as strings to Ray tasks ensures better serialization stability
         future = process_video_task.remote(
             video_id=video_id,
             video_path=video_path,
-            output_path=output_path,
+            output_path=str(output_path),
             augmentation_params=augmentation_settings,
         )
         futures.append(future)
@@ -181,14 +164,17 @@ def process_video_task(
     Reads, augments, and writes video entirely on the worker node.
     This avoids expensive serialization of video frames between driver and worker.
     """
+    v_path = Path(video_path)
+    o_path = Path(output_path)
+
     # Define pipeline inside the worker to ensure serialization
-    params = parse_augmentation_params(augmentation_params)
+    params = json.loads(augmentation_params)
     augmenter = build_augmenter(params)
 
-    cap = cv2.VideoCapture(video_path)
+    cap = cv2.VideoCapture(str(v_path))
     if not cap.isOpened():
         # Using print/logging inside remote function logs to driver stderr by default
-        print(f"ERROR: Cannot open {video_path}")
+        print(f"ERROR: Cannot open {v_path}")
         return None
 
     # Get Video Properties
@@ -196,9 +182,9 @@ def process_video_task(
     height = 480  # Matches your resize target
     fps = cap.get(cv2.CAP_PROP_FPS)
 
-    writer, err = create_video_writer(output_path, fps, width, height)
+    writer, err = create_video_writer(o_path, fps, width, height)
     if err or writer is None:
-        print(f"ERROR: Failed to initialize video writer for {output_path}: {err}")
+        print(f"ERROR: Failed to initialize video writer for {o_path}: {err}")
         cap.release()
         return {
             "video_id": video_id,
@@ -206,7 +192,7 @@ def process_video_task(
             "error_message": f"Writer failed: {err}",
         }
 
-    print(f"Processing {os.path.basename(video_path)} on worker...")
+    print(f"Processing {v_path.name} on worker...")
 
     # Loop through frames directly on the worker
     while True:
@@ -219,10 +205,10 @@ def process_video_task(
 
     cap.release()
     writer.release()
-    print(f"Finished augmentation: {output_path}")
+    print(f"Finished augmentation: {o_path}")
 
     # Return success record to be written to DB by the driver
-    return build_success_record(video_id, output_path, augmentation_params)
+    return build_success_record(video_id, o_path, augmentation_params)
 
 
 def insert_augmentation_record(record: Dict):
@@ -262,10 +248,7 @@ def insert_augmentation_record(record: Dict):
 
 
 def augment_pipeline(cfg: DictConfig):
-
-    output_dir = cfg.augment.output_dir
     setup_logger()
-
     ensure_db_credentials()
 
     videos_to_augment = fetch_videos_to_augment()
@@ -274,8 +257,14 @@ def augment_pipeline(cfg: DictConfig):
         return
 
     initialize_ray()
-    os.makedirs(output_dir, exist_ok=True)
-    augmentation_settings = get_augmentation_settings()
+
+    # Use Path for the output directory
+    output_dir = Path(cfg.augment.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    augmentation_settings = json.dumps(
+        OmegaConf.to_container(cfg.augment.settings, resolve=True)
+    )
 
     logger.info(f"Starting augmentation on {len(videos_to_augment)} videos.")
 

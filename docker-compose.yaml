@@ -142,10 +142,7 @@ services:
 
     # We must explicitly list all volumes because YAML doesn't merge lists.
     volumes:
-      # 1. Mount the DATA directory (This fixes your error)
       - ${AIRFLOW_PROJ_DIR:-.}/data:/app/data
-      
-      # 2. Keep the standard mounts from airflow-common (Optional but good for debugging)
       - ${AIRFLOW_PROJ_DIR:-.}/logs:/opt/airflow/logs
       - /var/run/docker.sock:/var/run/docker.sock
 
