@@ -1,6 +1,7 @@
 # pylint: disable=missing-module-docstring, missing-function-docstring, missing-class-docstring
 import json
 import os
+import random
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -42,7 +43,14 @@ def initialize_ray():
     print("Connected to existing Ray cluster.")
 
 
-def build_augmenter(params: Dict[str, Any]) -> A.Compose:
+def set_seed(seed: int):
+    """Sets the global seeds for Python and Numpy."""
+    random.seed(seed)
+    np.random.seed(seed)
+
+
+def build_augmenter(params: Dict[str, Any], seed: int = 42) -> A.Compose:
+    """Builds a deterministic augmentation pipeline using a fixed seed."""
     return A.Compose(
         [
             A.CoarseDropout(**params.get("CoarseDropout", {"p": 0.8})),
@@ -54,6 +62,7 @@ def build_augmenter(params: Dict[str, Any]) -> A.Compose:
             A.Resize(height=480, width=480, interpolation=cv2.INTER_LINEAR, p=1.0),
         ],
         p=1.0,
+        seed=seed,
     )
 
 
@@ -62,7 +71,6 @@ def create_video_writer(
 ) -> Tuple[Optional[cv2.VideoWriter], Optional[Exception]]:
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     try:
-        # OpenCV requires the path as a string
         return cv2.VideoWriter(str(output_path), fourcc, fps, (width, height)), None
     except Exception as e:
         return None, e
@@ -121,7 +129,7 @@ def fetch_videos_to_augment() -> List[Tuple[int, str, str]]:
 
 def prepare_output_path(output_dir: Path, filename: str) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
-    basename = os.path.splitext(filename)[0]
+    basename = Path(filename).stem
     return output_dir / f"{basename}.mp4"
 
 
@@ -129,17 +137,18 @@ def submit_augment_tasks(
     videos: List[Tuple[int, str, str]],
     output_dir: Path,
     augmentation_settings: str,
+    seed: int,
 ) -> Tuple[List[Any], Dict[Any, int]]:
     futures: List[Any] = []
     future_to_id: Dict[Any, int] = {}
     for video_id, video_path, filename in videos:
         output_path = prepare_output_path(output_dir, filename)
-        # Passing paths as strings to Ray tasks ensures better serialization stability
         future = process_video_task.remote(
             video_id=video_id,
             video_path=video_path,
             output_path=str(output_path),
             augmentation_params=augmentation_settings,
+            seed=seed,
         )
         futures.append(future)
         future_to_id[future] = video_id
@@ -151,35 +160,30 @@ def handle_results(futures: List[Any], future_to_id: Dict[Any, int]) -> None:
         insert_augmentation_record(result_record)
 
 
-# --- Refactored: Entire video processing moved to Ray Worker ---
-# MODIFIED: Combined IO and Processing into one remote task to eliminate data transfer overhead
 @ray.remote(**RAY_TASK_CONFIG)
 def process_video_task(
     video_id: int,
     video_path: str,
     output_path: str,
     augmentation_params: str,
+    seed: int,
 ) -> Optional[Dict]:
-    """
-    Reads, augments, and writes video entirely on the worker node.
-    This avoids expensive serialization of video frames between driver and worker.
-    """
+    """Reads, augments, and writes video deterministically on the worker node."""
+    # Ensure global seeds are set for this specific worker process
+    set_seed(seed)
+
     v_path = Path(video_path)
     o_path = Path(output_path)
 
-    # Define pipeline inside the worker to ensure serialization
     params = json.loads(augmentation_params)
-    augmenter = build_augmenter(params)
+    augmenter = build_augmenter(params, seed=seed)
 
     cap = cv2.VideoCapture(str(v_path))
     if not cap.isOpened():
-        # Using print/logging inside remote function logs to driver stderr by default
         print(f"ERROR: Cannot open {v_path}")
         return None
 
-    # Get Video Properties
-    width = 480  # Matches your resize target
-    height = 480  # Matches your resize target
+    width, height = 480, 480
     fps = cap.get(cv2.CAP_PROP_FPS)
 
     writer, err = create_video_writer(o_path, fps, width, height)
@@ -192,9 +196,8 @@ def process_video_task(
             "error_message": f"Writer failed: {err}",
         }
 
-    print(f"Processing {v_path.name} on worker...")
+    print(f"Processing {v_path.name} (Seed: {seed})...")
 
-    # Loop through frames directly on the worker
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -207,12 +210,10 @@ def process_video_task(
     writer.release()
     print(f"Finished augmentation: {o_path}")
 
-    # Return success record to be written to DB by the driver
     return build_success_record(video_id, o_path, augmentation_params)
 
 
 def insert_augmentation_record(record: Dict):
-    """Inserts a single augmentation record into the augmented_videos table."""
     conn = None
     try:
         conn = psycopg2.connect(
@@ -236,12 +237,10 @@ def insert_augmentation_record(record: Dict):
             ),
         )
         conn.commit()
-        logger.info(f"Augmentation record inserted for video ID {record['video_id']}.")
     except psycopg2.Error as e:
-        logger.error(f"DB Error inserting augmentation record: {e}")
+        logger.error(f"DB Error: {e}")
         if conn:
             conn.rollback()
-        # Do not raise here, as one video failing shouldn't crash the entire task
     finally:
         if conn:
             conn.close()
@@ -258,18 +257,22 @@ def augment_pipeline(cfg: DictConfig):
 
     initialize_ray()
 
-    # Use Path for the output directory
     output_dir = Path(cfg.augment.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Use a specific seed from config for reproducibility
+    seed = cfg.augment.get("seed", 42)
 
     augmentation_settings = json.dumps(
         OmegaConf.to_container(cfg.augment.settings, resolve=True)
     )
 
-    logger.info(f"Starting augmentation on {len(videos_to_augment)} videos.")
+    logger.info(
+        f"Starting deterministic pipeline (Seed: {seed}) for {len(videos_to_augment)} videos."
+    )
 
     futures, future_to_id = submit_augment_tasks(
-        videos_to_augment, output_dir, augmentation_settings
+        videos_to_augment, output_dir, augmentation_settings, seed
     )
     handle_results(futures, future_to_id)
 
@@ -282,5 +285,4 @@ def main(cfg: DictConfig):
 
 
 if __name__ == "__main__":
-    # pylint: disable=no-value-for-parameter
     main()

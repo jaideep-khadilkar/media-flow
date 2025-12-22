@@ -28,6 +28,7 @@ filter:
 
 augment:
   output_dir: "${data_root}/augmented"
+  seed: 42
   settings:
     CoarseDropout:
       max_holes: 8
