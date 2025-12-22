@@ -35,10 +35,12 @@ isort = "*"
 mypy = "*"
 pylint = "*"
 pytest = "*"
+pytest-cov = "*"
+coverage = "*"
 
 [environments]
 [environments.default]
-features = []
+features = ["dev"]
 
 [environments.dev]
 features = ["dev"]

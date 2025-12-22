@@ -57,7 +57,7 @@ def register_failure(video_id: int, task_name: str, error_message: str):
 
 
 def process_ray_results(
-    futures: List[ray.ObjectRef], future_to_id: Dict[ray.ObjectRef, int], task_name: str
+    futures: List[Any], future_to_id: Dict[Any, int], task_name: str
 ) -> Generator[Any, None, None]:
     """
     Orchestrates the Ray execution with Fault Tolerance.
