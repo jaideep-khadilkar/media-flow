@@ -1,7 +1,7 @@
 import json
 import os
 import sys
-from typing import Dict, Optional, List, Tuple, Any
+from typing import Any, Dict, List, Optional, Tuple
 
 import hydra
 import psycopg2

@@ -43,7 +43,7 @@ def filter_and_mark_videos(cfg: DictConfig):
 
         # NOTE: The status_column (is_quality_video) is assumed to be created by the setup DAG.
 
-        # Step 1: Reset the status of all videos to FALSE before running new filter (optional, but clean)
+        # Step 1: Reset the status of all videos to FALSE before running new filter
         # This prevents old flags from sticking if criteria change.
         reset_query = f"UPDATE video_metadata SET {status_column} = FALSE;"
         cursor.execute(reset_query)
@@ -79,4 +79,5 @@ def filter_and_mark_videos(cfg: DictConfig):
 
 if __name__ == "__main__":
     setup_logger()
+    # pylint: disable=no-value-for-parameter
     filter_and_mark_videos()

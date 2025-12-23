@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Run Tests & Linting
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Pixi
+        uses: prefix-dev/setup-pixi@v0.8.1
+        with:
+          pixi-version: v0.39.2
+          cache: true
+          environments: dev 
+
+      - name: Run Linters
+        run: |
+          pixi run -e dev black --check src tests
+          pixi run -e dev isort --check-only --profile black src tests
+          pixi run -e dev pylint --errors-only src tests
+
+      - name: Run Tests
+        env:
+          PYTHONPATH: src
+        run: pixi run -e dev pytest tests

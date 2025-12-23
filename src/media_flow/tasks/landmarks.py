@@ -5,6 +5,7 @@ import sys
 import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
+# pylint: disable=no-member
 import cv2
 import hydra
 import mediapipe as mp
@@ -80,7 +81,7 @@ def ensure_model_exists(model_path: str, url: str) -> None:
         try:
             urllib.request.urlretrieve(url, model_path)
         except Exception as e:
-            raise RuntimeError(f"Failed to download model: {e}")
+            raise RuntimeError(f"Failed to download model: {e}") from e
 
 
 def build_landmarker_options(model_path: str) -> mp_vision.FaceLandmarkerOptions:
@@ -153,8 +154,8 @@ def process_frame(
             face_points = [{"x": lm.x, "y": lm.y, "z": lm.z} for lm in face]
             frame_data.append(face_points)
         return annotated, frame_data
-    else:
-        return image_bgr, None
+
+    return image_bgr, None
 
 
 @ray.remote(**RAY_TASK_CONFIG)
@@ -168,7 +169,10 @@ def detect_landmarks_task(
     Ray Task: Detects facial landmarks using MediaPipe Tasks API (0.10+).
     """
     model_path = "/app/data/face_landmarker.task"
-    model_url = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
+    model_url = (
+        "https://storage.googleapis.com/mediapipe-models/face_landmarker"
+        "/face_landmarker/float16/1/face_landmarker.task"
+    )
     try:
         ensure_model_exists(model_path, model_url)
         options = build_landmarker_options(model_path)
@@ -203,7 +207,7 @@ def detect_landmarks_task(
             cap.release()
             out.release()
 
-            with open(output_json_path, "w") as f:
+            with open(output_json_path, "w", encoding="utf-8") as f:
                 json.dump(animation_data, f)
 
             return {
@@ -213,7 +217,7 @@ def detect_landmarks_task(
                 "status": "SUCCESS",
             }
     except Exception as e:
-        raise RuntimeError(f"Task failed: {e}")
+        raise RuntimeError(f"Task failed: {e}") from e
 
 
 def save_landmark_record(record: Dict):
@@ -345,4 +349,5 @@ def main(cfg: DictConfig):
 
 
 if __name__ == "__main__":
+    # pylint: disable=no-value-for-parameter
     main()
