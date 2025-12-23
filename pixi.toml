@@ -20,6 +20,7 @@ psycopg2 = ">=2.9.10,<3"
 ffmpeg = ">=8.0.0,<9"
 hydra-core = ">=1.3.2,<2"
 openai-whisper = ">=20250625,<20250626"
+rich = "<14"
 
 [pypi-dependencies]
 ray = { version = ">=2.52.1, <3", extras = ["default"] }
@@ -37,6 +38,10 @@ pylint = "*"
 pytest = "*"
 pytest-cov = "*"
 coverage = "*"
+
+[feature.dev.dependencies]
+dvc = ">=3.65.0,<4"
+dvc-gdrive = ">=3.0.1,<4"
 
 [environments]
 [environments.default]
