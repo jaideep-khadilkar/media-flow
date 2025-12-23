@@ -5,7 +5,7 @@ import types
 import numpy as np
 
 # Ensure module import works and stub out ray before importing augment
-sys.path.insert(0, "/app/src")
+# sys.path.insert(0, "/app/src")
 
 fake_ray = types.SimpleNamespace()
 

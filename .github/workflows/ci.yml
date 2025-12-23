@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Run Tests & Linting
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Pixi
+        uses: prefix-dev/setup-pixi@v0.8.1
+        with:
+          pixi-version: v0.39.2
+          cache: true
+          # Installs the 'dev' environment defined in your pixi.toml
+          environments: dev 
+
+      - name: Run Linters
+        run: |
+          pixi run -e dev black --check .
+          pixi run -e dev isort --check-only .
+          pixi run -e dev pylint src
+
+      - name: Run Tests
+        # We set PYTHONPATH to ./src so Python can find 'media_flow' packages
+        # This mirrors your Dockerfile configuration (ENV PYTHONPATH="/app/src")
+        env:
+          PYTHONPATH: src
+        run: pixi run -e dev pytest
