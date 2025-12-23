@@ -1,0 +1,6 @@
+outs:
+- md5: 5ad2d42848075b80126cc9c339111cec.dir
+  size: 27371203
+  nfiles: 7
+  hash: md5
+  path: landmarks_videos

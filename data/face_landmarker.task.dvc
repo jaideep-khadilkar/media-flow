@@ -1,0 +1,5 @@
+outs:
+- md5: b0e7274907a1644404fef66b28dd6d85
+  size: 3758596
+  hash: md5
+  path: face_landmarker.task
