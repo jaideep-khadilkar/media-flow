@@ -1,0 +1,6 @@
+outs:
+- md5: 6ca3e23352b3c07160480976ce8219f2.dir
+  size: 67194871
+  nfiles: 7
+  hash: md5
+  path: landmarks_json
