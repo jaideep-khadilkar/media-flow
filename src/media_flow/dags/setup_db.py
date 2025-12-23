@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pendulum
 from airflow.models.dag import DAG
+
+# pylint: disable=import-error, no-name-in-module
 from airflow.providers.postgres.operators.postgres import PostgresOperator
 
 POSTGRES_CONN_ID = "postgres_default"

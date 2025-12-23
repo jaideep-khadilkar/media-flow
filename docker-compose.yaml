@@ -133,7 +133,7 @@ services:
   # NEW SERVICE: Standalone Ray Head Node
   ray-head:
     # <<: *airflow-common
-    image: media-flow:1.6
+    image: media-flow:1.7
     container_name: ray-head
     ports:
       - "8265:8265" # Ray Dashboard

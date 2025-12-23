@@ -1,0 +1,10 @@
+[MESSAGES CONTROL]
+# Disable stylistic warnings, keep logical ones
+disable=
+    C0114, # missing-module-docstring
+    C0115, # missing-class-docstring
+    C0116, # missing-function-docstring
+    R0903, # too-few-public-methods
+    R0914, # too-many-locals
+    R0801, # duplicate-code
+    W0718, # broad-exception-caught

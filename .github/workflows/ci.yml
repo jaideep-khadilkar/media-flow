@@ -21,18 +21,15 @@ jobs:
         with:
           pixi-version: v0.39.2
           cache: true
-          # Installs the 'dev' environment defined in your pixi.toml
           environments: dev 
 
       - name: Run Linters
         run: |
-          pixi run -e dev black --check .
-          pixi run -e dev isort --check-only .
-          pixi run -e dev pylint src
+          pixi run -e dev black --check src tests
+          pixi run -e dev isort --check-only --profile black src tests
+          pixi run -e dev pylint --errors-only src tests
 
       - name: Run Tests
-        # We set PYTHONPATH to ./src so Python can find 'media_flow' packages
-        # This mirrors your Dockerfile configuration (ENV PYTHONPATH="/app/src")
         env:
           PYTHONPATH: src
-        run: pixi run -e dev pytest
+        run: pixi run -e dev pytest tests

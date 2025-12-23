@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from airflow import DAG
 from airflow.providers.docker.operators.docker import DockerOperator
@@ -8,7 +8,7 @@ from docker.types import Mount
 REPO_PATH_ON_HOST = "C:/Users/iamja/Documents/GitHub/media-flow"
 REPO_PATH_IN_CONTAINER = "/app"
 DATA_PATH = "/app/data"
-WORKER_IMAGE = "media-flow:1.6"
+WORKER_IMAGE = "media-flow:1.7"
 POSTGRES_CONN_ID = "postgres_default"
 
 default_args = {
@@ -66,7 +66,7 @@ with DAG(
         network_mode="media-flow_default",
     )
 
-    # --- Augment Task (Reads filtered videos, Writes file to disk and record to augmented_videos DB table) ---
+    # --- Augment Task (Reads metadata, creates augmented videos) ---
     augment_videos = DockerOperator(
         task_id="augment_videos",
         image=WORKER_IMAGE,

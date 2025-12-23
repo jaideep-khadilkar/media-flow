@@ -3,6 +3,7 @@ import sys
 import types
 
 import numpy as np
+from omegaconf import OmegaConf
 
 # Ensure module import works and stub out ray before importing augment
 # sys.path.insert(0, "/app/src")
@@ -10,6 +11,7 @@ import numpy as np
 fake_ray = types.SimpleNamespace()
 
 
+# pylint: disable=unused-argument
 def _fake_remote(**kwargs):
     def _decorator(fn):
         # Return function directly so we can call it in tests without Ray
@@ -25,7 +27,7 @@ fake_ray.shutdown = lambda *a, **k: None
 # Force the stubbed ray to be used by augment.py at import time
 sys.modules["ray"] = fake_ray
 
-from media_flow.tasks import augment as augment  # noqa: E402
+from media_flow.tasks import augment
 
 
 def test_set_seed_determinism():
@@ -91,10 +93,12 @@ def test_process_video_task_happy_path(monkeypatch, tmp_path):
     frame2 = np.ones((4, 4, 3), dtype=np.uint8) * 255
 
     class FakeCap:
+        # pylint: disable=unused-argument
         def __init__(self, *a, **k):
             self.frames = [frame1, frame2]
             self.idx = 0
 
+        # pylint: disable=invalid-name
         def isOpened(self):
             return True
 
@@ -109,11 +113,12 @@ def test_process_video_task_happy_path(monkeypatch, tmp_path):
             pass
 
         def get(self, prop):
-            if prop == augment.cv2.CAP_PROP_FPS:
+            if prop == augment.cv2.CAP_PROP_FPS:  # pylint: disable=no-member
                 return 24.0
             return 0.0
 
     class FakeWriter:
+        # pylint: disable=unused-argument
         def __init__(self, *a, **k):
             self.writes = []
 
@@ -153,6 +158,7 @@ def test_process_video_task_writer_failure(monkeypatch, tmp_path):
         def __init__(self, *a, **k):
             pass
 
+        # pylint: disable=invalid-name
         def isOpened(self):
             return True
 
@@ -162,6 +168,7 @@ def test_process_video_task_writer_failure(monkeypatch, tmp_path):
         def release(self):
             pass
 
+        # pylint: disable=unused-argument
         def get(self, prop):
             return 30.0
 
@@ -198,6 +205,7 @@ def test_fetch_videos_to_augment(monkeypatch):
             return self._rows
 
     class FakeConn:
+        # pylint: disable=unused-argument
         def __init__(self, *a, **k):
             self.closed = False
             self._cursor = FakeCursor()
@@ -230,6 +238,7 @@ def test_insert_augmentation_record(monkeypatch):
             self.args.append(params)
 
     class FakeConn:
+        # pylint: disable=unused-argument
         def __init__(self, *a, **k):
             self._cursor = FakeCursor()
             self._committed = False
@@ -248,6 +257,7 @@ def test_insert_augmentation_record(monkeypatch):
         def close(self):
             self._closed = True
 
+    # pylint: disable=unused-argument
     def fake_connect(*a, **k):
         c = FakeConn()
         captured["conn"] = c
@@ -269,6 +279,7 @@ def test_insert_augmentation_record(monkeypatch):
     augment.insert_augmentation_record(rec)
 
     conn = captured["conn"]
+    # pylint: disable=protected-access
     assert conn._committed is True
     stmt = conn._cursor.statements[0]
     args = conn._cursor.args[0]
@@ -330,9 +341,6 @@ def test_augment_pipeline_no_videos_short_circuits(monkeypatch, tmp_path):
     # Avoid env requirement and Ray init
     monkeypatch.setattr(augment, "ensure_db_credentials", lambda: None)
     monkeypatch.setattr(augment, "fetch_videos_to_augment", lambda: [])
-
-    # Minimal Hydra-like config using OmegaConf
-    from omegaconf import OmegaConf
 
     cfg = OmegaConf.create(
         {"augment": {"output_dir": str(tmp_path), "settings": {}, "seed": 7}}

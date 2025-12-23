@@ -1,6 +1,7 @@
-import ray
-import time
 import os
+import time
+
+import ray
 
 
 def initialize_ray():
@@ -45,9 +46,6 @@ def run_ray_test():
     num_tasks = 200  # Submit more tasks than available CPUs to see queuing
 
     print(f"\nSubmitting {num_tasks} heavy pure-Python tasks...")
-    print(
-        "Check the Ray dashboard now — you should see multiple worker processes with high CPU usage!\n"
-    )
 
     # Submit all tasks
     futures = [heavy_pure_python_task.remote(i) for i in range(num_tasks)]
